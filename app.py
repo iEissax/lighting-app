@@ -5,13 +5,9 @@ from lxml import etree
 import re
 import io
 
-# إعدادات واجهة الموقع
 st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="centered")
+st.title("📂 مستخرج بيانات KMZ")
 
-st.title("📂 مستخرج بيانات KMZ لشبكات الإنارة")
-st.write("قم برفع ملف الـ KMZ المستخرج من Map Marker لتحويله إلى ملف Excel منسق.")
-
-# خانة رفع الملف
 uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
 
 def process_kmz(file):
@@ -27,83 +23,83 @@ def process_kmz(file):
         name_text = pm.xpath("./kml:name/text()", namespaces=ns)
         full_name = name_text[0].strip() if name_text else ""
 
-        # استخراج المحطة
-        station_match = re.search(r'\((.*?)\)', full_name)
-        station_code = station_match.group(1) if station_match else ""
-        
-        # تفكيك الأرقام
-        clean_name = re.sub(r'\(.*?\)', '', full_name)
-        parts = re.split(r'[/|-]', clean_name)
-        
-        try:
-            raw_f = int(re.search(r'\d+', parts[0]).group()) if len(parts) > 0 else 0
-            raw_c = int(re.search(r'\d+', parts[1]).group()) if len(parts) > 1 else 0
-        except:
-            raw_f, raw_c = 0, 0
+        # تحليل النمط (مثال: ق 17/5/1)
+        numbers = re.findall(r'\d+', full_name)
+        column_num = int(numbers[0]) if len(numbers) >= 1 else 0
+        feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
+        extra_num = numbers[2] if len(numbers) >= 3 else ""
 
-        # التنسيق المطلوب (العمود/الفيدر)
-        formatted_name = f"{raw_c}/{raw_f}"
+        station_part = re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name)
+        station_code = station_part.group(0) if station_part else ""
 
-        # البحث في الوصف والبيانات الممتدة
+        formatted_name = f"{column_num}/{feeder_num}"
+        if extra_num: formatted_name += f"/{extra_num}"
+        if station_code: formatted_name = f"{station_code} {formatted_name}"
+
+        # البحث في الوصف
         desc = pm.xpath("./kml:description/text()", namespaces=ns)
         desc_text = desc[0] if desc else ""
-        extended_values = pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns)
-        full_search_text = (desc_text + " " + " ".join(extended_values)).strip()
+        ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
+        search_area = (desc_text + " " + ext_vals).strip()
 
-        # استخراج الطول (6, 8, 9, 10, 12)
-        height_match = re.search(r'\b(12|10|9|8|6)\b', full_search_text)
+        status = "مغروز" if "مغروز" in search_area else ("مفقود" if "مفقود" in search_area else "طبيعي")
+        height_match = re.search(r'\b(12|10|9|8|6)\b', search_area)
         val_height = height_match.group(1) if height_match else "غير مسجل"
-
-        # عدد الشمعات
-        val_lamps = 2 if "دبل" in full_search_text else (1 if "مفرد" in full_search_text else 0)
-        if val_lamps == 0:
-            lamp_num = re.search(r'(\d+)\s*(?:شمعة|كشاف)', full_search_text)
-            val_lamps = int(lamp_num.group(1)) if lamp_num else 0
-
-        # الحالة
-        status = "مغروز" if "مغروز" in full_search_text else ("مفقود" if "مفقود" in full_search_text else "طبيعي")
+        lamps = 2 if "دبل" in search_area else (1 if "مفرد" in search_area else 0)
 
         # الإحداثيات
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
-        lat, lon = 0, 0
+        lat_str, lon_str = "0.00000", "0.00000"
         if coords:
-            c = coords[0].strip().split(',')
-            lon, lat = round(float(c[0]), 6), round(float(c[1]), 6)
+            coord_split = coords[0].strip().split(',')
+            lat_str = "{:.5f}".format(float(coord_split[1]))
+            lon_str = "{:.5f}".format(float(coord_split[0]))
 
         data.append({
-            "تنسيق (العمود/الفيدر)": formatted_name,
-            "المحطة": station_code,
-            "رقم الفيدر": raw_f,
-            "رقم العمود": raw_c,
-            "الحالة": status,
-            "طول العمود": val_height,
-            "عدد الشمعات": val_lamps,
-            "خط العرض": lat,
-            "خط الطول": lon
+            "Station": station_code,
+            "ID (Col/Feed)": formatted_name,
+            "Status": status,
+            "Height (m)": val_height,
+            "Lamps": lamps,
+            "Coordinates (Lat,Long)": f"{lat_str},{lon_str}",
+            "f_num": feeder_num,
+            "c_num": column_num
         })
 
     df = pd.DataFrame(data)
-    df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
-    df_final = df.drop(columns=['رقم الفيدر', 'رقم العمود'])
-    return df_final
+    df = df.sort_values(by=['Station', 'f_num', 'c_num'], ascending=[True, True, True])
+    return df.drop(columns=['f_num', 'c_num'])
 
-if uploaded_file is not None:
-    with st.spinner('جاري معالجة الملف...'):
-        result_df = process_kmz(uploaded_file)
+if uploaded_file:
+    result_df = process_kmz(uploaded_file)
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        result_df.to_excel(writer, index=False, sheet_name='Lighting Report')
         
-        st.success(f"تمت المعالجة بنجاح! تم العثور على {len(result_df)} نقطة.")
+        workbook  = writer.book
+        worksheet = writer.sheets['Lighting Report']
         
-        # عرض عينة من البيانات
-        st.dataframe(result_df.head(10))
+        # تنسيق من اليسار لليمين
+        worksheet.set_right_to_left(False) 
+        
+        # تعريف التنسيقات
+        header_format = workbook.add_format({
+            'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 12
+        })
+        cell_format = workbook.add_format({
+            'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 11
+        })
 
-        # تحويل البيانات إلى Excel للتحميل
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            result_df.to_excel(writer, index=False, sheet_name='Sheet1')
-        
-        st.download_button(
-            label="📥 تحميل ملف Excel المنسق",
-            data=output.getvalue(),
-            file_name="Electrical_Network_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        # ضبط العناوين وتوسيع الأعمدة تلقائياً
+        for i, col in enumerate(result_df.columns):
+            # حساب طول أطول نص في العمود (بين اسم العمود والبيانات)
+            column_len = result_df[col].astype(str).str.len().max()
+            column_len = max(column_len, len(col)) + 4  # إضافة مساحة إضافية (Padding)
+            
+            # تطبيق العرض المحسوب والتنسيق
+            worksheet.set_column(i, i, column_len, cell_format)
+            worksheet.write(0, i, col, header_format)
+
+    st.success("تم تنسيق الملف وتوسيع الخلايا بنجاح!")
+    st.download_button("📥 تحميل ملف Excel المنسق", output.getvalue(), "Lighting_Final_Report.xlsx")

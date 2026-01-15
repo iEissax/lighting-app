@@ -7,7 +7,7 @@ import io
 import pydeck as pdk
 
 st.set_page_config(page_title="مستخرج بيانات الإنارة المطور", layout="wide")
-st.title("📍 نظام استخراج بيانات الشبكة (الأطوال والأذرعة)")
+st.title("📍 نظام استخراج وتحليل بيانات الشبكة")
 
 uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
 
@@ -22,7 +22,7 @@ def process_kmz(file):
         ns = {"kml": "http://www.opengis.net/kml/2.2"}
         data = []
 
-        # الألوان بناءً على الطول
+        # الألوان للخريطة بناءً على الطول
         color_map = {
             "12": [255, 0, 0], "10": [0, 255, 0], "9": [0, 0, 255],
             "8": [255, 165, 0], "6": [128, 0, 128], "غير مسجل": [150, 150, 150]
@@ -36,39 +36,45 @@ def process_kmz(file):
             ext_data = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
             full_description = (desc[0] if desc else "") + " " + ext_data
 
-            # --- 1. استخراج الطول ---
-            # يبحث عن نمط 12m أو رقم مجرد من الأطوال المعروفة
+            # 1. استخراج الطول
             height_match = re.search(r'(\d+)\s*m|(?<!/)\b(12|10|9|8|6)\b', full_description, re.IGNORECASE)
-            if height_match:
-                height_val = height_match.group(1) if height_match.group(1) else height_match.group(2)
-            else:
-                height_val = "غير مسجل"
+            height_val = height_match.group(1) if height_match and height_match.group(1) else (height_match.group(2) if height_match else "غير مسجل")
             
-            # --- 2. استخراج الأذرعة ---
-            # يبحث عن مفرد/دبل أو نمط 1/1 أو 1/2
-            arm_count = 1 # الافتراضي
-            if "دبل" in full_description or "1/2" in full_description or "2/1" in full_description:
-                arm_count = 2
-                arm_text = "دبل (2)"
-            elif "مفرد" in full_description or "1/1" in full_description:
-                arm_count = 1
-                arm_text = "مفرد (1)"
+            # 2. استخراج الأذرعة
+            arm_count = 1
+            if any(x in full_description for x in ["دبل", "1/2", "2/1"]):
+                arm_count, arm_text = 2, "دبل"
+            elif any(x in full_description for x in ["مفرد", "1/1"]):
+                arm_count, arm_text = 1, "مفرد"
             else:
                 arm_text = "غير محدد"
 
+            # 3. استخراج الحالة
+            if "مفقود" in full_description:
+                status = "مفقود"
+            elif "مغروز" in full_description:
+                status = "مغروز"
+            else:
+                status = "طبيعي"
+
             rgb = color_map.get(height_val, [150, 150, 150])
 
+            # 4. الإحداثيات (00.00000)
             coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
             if coords:
                 parts = coords[0].strip().split(',')
                 if len(parts) >= 2:
+                    lat_val = float(parts[1])
+                    lon_val = float(parts[0])
                     data.append({
                         "الاسم": full_name,
                         "الطول (m)": height_val,
                         "الأذرعة": arm_text,
-                        "عدد المصابيح": arm_count,
-                        "lat": float(parts[1]),
-                        "lon": float(parts[0]),
+                        "الحالة": status,
+                        "lat_num": lat_val,
+                        "lon_num": lon_val,
+                        "Latitude": "{:.5f}".format(lat_val),
+                        "Longitude": "{:.5f}".format(lon_val),
                         "r": rgb[0], "g": rgb[1], "b": rgb[2]
                     })
 
@@ -81,39 +87,50 @@ if uploaded_file:
     df = process_kmz(uploaded_file)
     
     if df is not None and not df.empty:
-        # الإحصائيات
-        st.subheader("📊 ملخص الأعمدة")
-        c1, c2 = st.columns(2)
+        # إحصائيات
+        st.subheader("📊 ملخص الحالات")
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("إجمالي الأعمدة", len(df))
-        c2.metric("إجمالي المصابيح", int(df['عدد المصابيح'].sum()))
+        c2.metric("مفقود ❌", len(df[df['الحالة'] == "مفقود"]))
+        c3.metric("مغروز 🏗️", len(df[df['الحالة'] == "مغروز"]))
+        c4.metric("طبيعي ✅", len(df[df['الحالة'] == "طبيعي"]))
         
-        # الخريطة
-        st.subheader("📍 الخريطة التفاعلية")
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            df,
-            get_position='[lon, lat]',
-            get_color='[r, g, b, 200]',
-            get_radius=10,
-            pickable=True,
-        )
-        st.pydeck_chart(pdk.Deck(
-            layers=[layer], 
-            initial_view_state=pdk.ViewState(latitude=df['lat'].mean(), longitude=df['lon'].mean(), zoom=14),
-            tooltip={"text": "الاسم: {الاسم}\nالطول: {الطول (m)}m\nالأذرعة: {الأذرعة}"}
-        ))
+        # خريطة
+        st.subheader("📍 الخريطة")
+        layer = pdk.Layer("ScatterplotLayer", df, get_position='[lon_num, lat_num]', get_color='[r, g, b, 200]', get_radius=10, pickable=True)
+        st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=pdk.ViewState(latitude=df['lat_num'].mean(), longitude=df['lon_num'].mean(), zoom=14),
+                                 tooltip={"text": "الاسم: {الاسم}\nالحالة: {الحالة}\nالطول: {الطول (m)}"}))
 
-        # الجدول والتحميل
-        st.subheader("📄 البيانات المستخرجة")
-        final_df = df[['الاسم', 'الطول (m)', 'الأذرعة', 'lat', 'lon']]
+        # جدول البيانات
+        st.subheader("📄 جدول البيانات المستخرجة")
+        final_df = df[['الاسم', 'الطول (m)', 'الأذرعة', 'الحالة', 'Latitude', 'Longitude']]
         st.dataframe(final_df, use_container_width=True)
 
+        # تحميل الإكسل المظلل
         st.divider()
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             final_df.to_excel(writer, index=False, sheet_name='Report')
-            # تنسيق عرض الأعمدة تلقائياً
-            for i, col in enumerate(final_df.columns):
-                writer.sheets['Report'].set_column(i, i, 18)
+            workbook = writer.book
+            worksheet = writer.sheets['Report']
 
-        st.download_button("📥 تحميل ملف Excel المنسق", output.getvalue(), "Lighting_Analysis.xlsx")
+            # تعريف التنسيقات
+            header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
+            red_row_fmt = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1}) # أحمر خفيف
+            normal_row_fmt = workbook.add_format({'border': 1})
+
+            # تنسيق العناوين
+            for i, col in enumerate(final_df.columns):
+                worksheet.write(0, i, col, header_fmt)
+                worksheet.set_column(i, i, 18)
+
+            # تظليل الصفوف بناءً على الحالة
+            for row_num, row_data in enumerate(final_df.values):
+                current_status = row_data[3] # عمود الحالة هو الرقم 3
+                fmt = red_row_fmt if current_status in ["مفقود", "مغروز"] else normal_row_fmt
+                
+                # كتابة الصف كاملاً بالتنسيق المختار
+                for col_num, cell_value in enumerate(row_data):
+                    worksheet.write(row_num + 1, col_num, cell_value, fmt)
+
+        st.download_button("📥 تحميل ملف Excel (مظلل للحالات الحرجة)", output.getvalue(), "Lighting_Report_Colored.xlsx")

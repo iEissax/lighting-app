@@ -11,6 +11,14 @@ st.title("📍 نظام استخراج وتحليل بيانات الشبكة")
 
 uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
 
+# دالة ذكية لتفكيك الاسم والترتيب حسب (المحطة/الفيدر/العمود)
+def sort_key_func(name):
+    # البحث عن الأرقام في النص (مثال: 30ق/1/12)
+    # المجموعات: 1=المحطة، 2=الفيدر، 3=رقم العمود
+    parts = re.findall(r'\d+', name)
+    # تحويل الأجزاء إلى أرقام صحيحة لضمان الترتيب الحسابي (10 تأتي بعد 2)
+    return [int(p) for p in parts] if parts else [0]
+
 def process_kmz(file):
     try:
         with zipfile.ZipFile(file, 'r') as f:
@@ -22,15 +30,14 @@ def process_kmz(file):
         ns = {"kml": "http://www.opengis.net/kml/2.2"}
         data = []
 
-        # الألوان للخريطة بناءً على الطول
         color_map = {
             "12": [255, 0, 0], "10": [0, 255, 0], "9": [0, 0, 255],
             "8": [255, 165, 0], "6": [128, 0, 128], "غير مسجل": [150, 150, 150]
         }
 
         for pm in tree.xpath("//kml:Placemark", namespaces=ns):
-            name = pm.xpath("./kml:name/text()", namespaces=ns)
-            full_name = name[0].strip() if name else "بدون اسم"
+            name_node = pm.xpath("./kml:name/text()", namespaces=ns)
+            full_name = name_node[0].strip() if name_node else "بدون اسم"
 
             desc = pm.xpath("./kml:description/text()", namespaces=ns)
             ext_data = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
@@ -78,7 +85,14 @@ def process_kmz(file):
                         "r": rgb[0], "g": rgb[1], "b": rgb[2]
                     })
 
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        
+        # --- تطبيق الترتيب التسلسلي الذكي ---
+        if not df.empty:
+            df['sort_key'] = df['الاسم'].apply(sort_key_func)
+            df = df.sort_values(by='sort_key').drop(columns=['sort_key'])
+            
+        return df
     except Exception as e:
         st.error(f"حدث خطأ: {e}")
         return None
@@ -102,11 +116,11 @@ if uploaded_file:
                                  tooltip={"text": "الاسم: {الاسم}\nالحالة: {الحالة}\nالطول: {الطول (m)}"}))
 
         # جدول البيانات
-        st.subheader("📄 جدول البيانات المستخرجة")
+        st.subheader("📄 جدول البيانات (مرتب تسلسلياً: محطة/فيدر/عمود)")
         final_df = df[['الاسم', 'الطول (m)', 'الأذرعة', 'الحالة', 'Latitude', 'Longitude']]
         st.dataframe(final_df, use_container_width=True)
 
-        # تحميل الإكسل المظلل
+        # تحميل الإكسل المظلل والمنظم
         st.divider()
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -114,23 +128,18 @@ if uploaded_file:
             workbook = writer.book
             worksheet = writer.sheets['Report']
 
-            # تعريف التنسيقات
             header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
-            red_row_fmt = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1}) # أحمر خفيف
+            red_row_fmt = workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006', 'border': 1})
             normal_row_fmt = workbook.add_format({'border': 1})
 
-            # تنسيق العناوين
             for i, col in enumerate(final_df.columns):
                 worksheet.write(0, i, col, header_fmt)
                 worksheet.set_column(i, i, 18)
 
-            # تظليل الصفوف بناءً على الحالة
             for row_num, row_data in enumerate(final_df.values):
-                current_status = row_data[3] # عمود الحالة هو الرقم 3
+                current_status = row_data[3] 
                 fmt = red_row_fmt if current_status in ["مفقود", "مغروز"] else normal_row_fmt
-                
-                # كتابة الصف كاملاً بالتنسيق المختار
                 for col_num, cell_value in enumerate(row_data):
                     worksheet.write(row_num + 1, col_num, cell_value, fmt)
 
-        st.download_button("📥 تحميل ملف Excel (مظلل للحالات الحرجة)", output.getvalue(), "Lighting_Report_Colored.xlsx")
+        st.download_button("📥 تحميل التقرير المرتب تسلسلياً (Excel)", output.getvalue(), "Lighting_Report_Sorted.xlsx")

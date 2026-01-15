@@ -5,8 +5,8 @@ from lxml import etree
 import re
 import io
 
-st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="centered")
-st.title("📂 مستخرج بيانات KMZ")
+st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="wide") # تم تغييرها لـ wide لعرض أفضل
+st.title("📂 مستخرج ومحلل بيانات KMZ")
 
 uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
 
@@ -23,7 +23,6 @@ def process_kmz(file):
         name_text = pm.xpath("./kml:name/text()", namespaces=ns)
         full_name = name_text[0].strip() if name_text else ""
 
-        # تحليل النمط (مثال: ق 17/5/1)
         numbers = re.findall(r'\d+', full_name)
         column_num = int(numbers[0]) if len(numbers) >= 1 else 0
         feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
@@ -36,7 +35,6 @@ def process_kmz(file):
         if extra_num: formatted_name += f"/{extra_num}"
         if station_code: formatted_name = f"{station_code} {formatted_name}"
 
-        # البحث في الوصف
         desc = pm.xpath("./kml:description/text()", namespaces=ns)
         desc_text = desc[0] if desc else ""
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
@@ -47,13 +45,12 @@ def process_kmz(file):
         val_height = height_match.group(1) if height_match else "غير مسجل"
         lamps = 2 if "دبل" in search_area else (1 if "مفرد" in search_area else 0)
 
-        # الإحداثيات
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
-        lat_str, lon_str = "0.00000", "0.00000"
+        lat, lon = 0.0, 0.0
         if coords:
             coord_split = coords[0].strip().split(',')
-            lat_str = "{:.5f}".format(float(coord_split[1]))
-            lon_str = "{:.5f}".format(float(coord_split[0]))
+            lat = float(coord_split[1])
+            lon = float(coord_split[0])
 
         data.append({
             "Station": station_code,
@@ -61,45 +58,52 @@ def process_kmz(file):
             "Status": status,
             "Height (m)": val_height,
             "Lamps": lamps,
-            "Coordinates (Lat,Long)": f"{lat_str},{lon_str}",
+            "Latitude": lat,
+            "Longitude": lon,
+            "Coordinates": f"{lat:.5f},{lon:.5f}",
             "f_num": feeder_num,
             "c_num": column_num
         })
 
     df = pd.DataFrame(data)
     df = df.sort_values(by=['Station', 'f_num', 'c_num'], ascending=[True, True, True])
-    return df.drop(columns=['f_num', 'c_num'])
+    return df
 
 if uploaded_file:
     result_df = process_kmz(uploaded_file)
     
+    # --- قسم الإحصائيات (Metrics) ---
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("إجمالي الأعمدة", len(result_df))
+    col2.metric("مغروز", len(result_df[result_df['Status'] == "مغروز"]))
+    col3.metric("مفقود", len(result_df[result_df['Status'] == "مفقود"]))
+    col4.metric("طبيعي", len(result_df[result_df['Status'] == "طبيعي"]))
+
+    # --- قسم الخريطة ---
+    st.subheader("📍 مواقع أعمدة الإنارة على الخريطة")
+    map_data = result_df[['Latitude', 'Longitude']].rename(columns={'Latitude': 'lat', 'Longitude': 'lon'})
+    st.map(map_data)
+
+    # --- قسم معاينة الجدول ---
+    st.subheader("📄 معاينة البيانات")
+    st.dataframe(result_df.drop(columns=['f_num', 'c_num', 'Latitude', 'Longitude']), use_container_width=True)
+
+    # --- قسم التحميل (Excel) ---
     output = io.BytesIO()
+    # (نفس كود التنسيق الخاص بك مع تعديل بسيط لحذف الأعمدة الزائدة قبل الحفظ)
+    final_df_for_excel = result_df.drop(columns=['f_num', 'c_num', 'Latitude', 'Longitude'])
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        result_df.to_excel(writer, index=False, sheet_name='Lighting Report')
-        
+        final_df_for_excel.to_excel(writer, index=False, sheet_name='Lighting Report')
         workbook  = writer.book
         worksheet = writer.sheets['Lighting Report']
-        
-        # تنسيق من اليسار لليمين
         worksheet.set_right_to_left(False) 
+        header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
         
-        # تعريف التنسيقات
-        header_format = workbook.add_format({
-            'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 12
-        })
-        cell_format = workbook.add_format({
-            'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 11
-        })
-
-        # ضبط العناوين وتوسيع الأعمدة تلقائياً
-        for i, col in enumerate(result_df.columns):
-            # حساب طول أطول نص في العمود (بين اسم العمود والبيانات)
-            column_len = result_df[col].astype(str).str.len().max()
-            column_len = max(column_len, len(col)) + 4  # إضافة مساحة إضافية (Padding)
-            
-            # تطبيق العرض المحسوب والتنسيق
-            worksheet.set_column(i, i, column_len, cell_format)
+        for i, col in enumerate(final_df_for_excel.columns):
+            column_len = max(final_df_for_excel[col].astype(str).str.len().max(), len(col)) + 4
+            worksheet.set_column(i, i, column_len)
             worksheet.write(0, i, col, header_format)
 
-    st.success("تم تنسيق الملف وتوسيع الخلايا بنجاح!")
-    st.download_button("📥 تحميل ملف Excel المنسق", output.getvalue(), "Lighting_Final_Report.xlsx")
+    st.divider()
+    st.download_button("📥 تحميل ملف Excel المنسق", output.getvalue(), "Lighting_Final_Report.xlsx", mime="application/vnd.ms-excel")

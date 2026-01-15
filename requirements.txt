@@ -2,3 +2,4 @@ streamlit
 pandas
 lxml
 xlsxwriter
+pydeck

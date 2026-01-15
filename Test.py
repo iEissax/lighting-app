@@ -6,8 +6,8 @@ import re
 import io
 import pydeck as pdk
 
-st.set_page_config(page_title="محلل بيانات الإنارة", layout="wide")
-st.title("📍 خريطة الأعمدة الملونة (تحليل الوصف)")
+st.set_page_config(page_title="مستخرج بيانات الإنارة", layout="wide")
+st.title("📍 خريطة أعمدة الإنارة الملونة")
 
 uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
 
@@ -22,8 +22,8 @@ def process_kmz(file):
         ns = {"kml": "http://www.opengis.net/kml/2.2"}
         data = []
 
-        # قاموس الألوان الثابتة [R, G, B]
-        color_lookup = {
+        # قاموس الألوان: [الأحمر, الأخضر, الأزرق]
+        color_map = {
             "12": [255, 0, 0],    # أحمر
             "10": [0, 255, 0],    # أخضر
             "9":  [0, 0, 255],    # أزرق
@@ -36,91 +36,80 @@ def process_kmz(file):
             name = pm.xpath("./kml:name/text()", namespaces=ns)
             full_name = name[0].strip() if name else "بدون اسم"
 
-            # استخراج الوصف بالكامل (نبحث فيه عن الطول)
             desc = pm.xpath("./kml:description/text()", namespaces=ns)
-            ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
-            full_desc = (desc[0] if desc else "") + " " + ext_vals
+            ext_data = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
+            full_description = (desc[0] if desc else "") + " " + ext_data
 
-            # البحث عن الطول: نبحث عن رقم محاط بحدود كلمات \b لضمان عدم أخذ جزء من رقم آخر
-            # الأرقام المدعومة هي 12, 10, 9, 8, 6
-            height_match = re.search(r'\b(12|10|9|8|6)\b', full_desc)
-            height_val = height_match.group(1) if height_match else "غير مسجل"
+            # استخراج الطول من الوصف
+            height_search = re.search(r'\b(12|10|9|8|6)\b', full_description)
+            height_val = height_search.group(1) if height_search else "غير مسجل"
             
-            # جلب اللون المخصص
-            rgb = color_lookup.get(height_val, [150, 150, 150])
+            rgb = color_map.get(height_val, [150, 150, 150])
 
             coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
             if coords:
                 parts = coords[0].strip().split(',')
                 if len(parts) >= 2:
                     data.append({
-                        "name": full_name,
-                        "height": height_val,
+                        "الاسم": full_name,
+                        "الطول": height_val,
                         "lat": float(parts[1]),
                         "lon": float(parts[0]),
                         "r": rgb[0],
                         "g": rgb[1],
-                        "b": rgb[2],
-                        "full_description": full_desc[:50] + "..." # للمعاينة فقط
+                        "b": rgb[2]
                     })
 
         return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"خطأ أثناء معالجة الملف: {e}")
+        st.error(f"حدث خطأ: {e}")
         return None
 
 if uploaded_file:
     df = process_kmz(uploaded_file)
     
     if df is not None and not df.empty:
-        # --- قسم الفلاتر (شريط جانبي) ---
-        st.sidebar.header("🔍 تصفية الخريطة")
-        available_heights = sorted(df['height'].unique().tolist())
-        selected_heights = st.sidebar.multiselect(
-            "اختر الأطوال المراد عرضها:", 
-            available_heights, 
-            default=available_heights
-        )
-
-        # فلترة البيانات بناءً على اختيار المستخدم
-        filtered_df = df[df['height'].isin(selected_heights)]
-
-        # --- الإحصائيات ---
-        st.subheader("📊 ملخص البيانات المفلترة")
-        cols = st.columns(len(selected_heights) if len(selected_heights) > 0 else 1)
-        for i, h in enumerate(selected_heights):
-            count = len(filtered_df[filtered_df['height'] == h])
-            cols[i % len(cols)].metric(f"طول {h}م", f"{count}")
-
-        # --- الخريطة الاحترافية (Pydeck) ---
-        st.subheader("📍 خريطة توزيع الأعمدة")
+        # 1. عرض الإحصائيات
+        st.subheader("📊 ملخص البيانات")
+        st.write(f"إجمالي عدد الأعمدة المكتشفة: **{len(df)}**")
         
-        if not filtered_df.empty:
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                filtered_df,
-                get_position='[lon, lat]',
-                get_color='[r, g, b, 180]', # تلوين النقاط r,g,b من الجدول
-                get_radius=12,
-                pickable=True,
-            )
+        # 2. الخريطة
+        st.subheader("📍 خريطة توزيع الأعمدة")
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            df,
+            get_position='[lon, lat]',
+            get_color='[r, g, b, 200]',
+            get_radius=12,
+            pickable=True,
+        )
+        view_state = pdk.ViewState(latitude=df['lat'].mean(), longitude=df['lon'].mean(), zoom=14)
+        st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, 
+                                 tooltip={"text": "الاسم: {الاسم}\nالطول: {الطول}م"}))
+        st.markdown("🔴 12م | 🟢 10م | 🔵 9م | 🟠 8م | 🟣 6م | ⚪ غير مسجل")
 
-            view_state = pdk.ViewState(
-                latitude=filtered_df['lat'].mean(),
-                longitude=filtered_df['lon'].mean(),
-                zoom=14
-            )
+        # 3. جدول البيانات
+        st.subheader("📄 معاينة البيانات")
+        st.dataframe(df[['الاسم', 'الطول', 'lat', 'lon']], use_container_width=True)
 
-            st.pydeck_chart(pdk.Deck(
-                layers=[layer],
-                initial_view_state=view_state,
-                tooltip={"text": "الاسم: {name}\nالطول المكتشف: {height}م"}
-            ))
+        # 4. خانة تحميل الملف (Excel)
+        st.divider()
+        st.subheader("📥 تحميل النتائج")
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df[['الاسم', 'الطول', 'lat', 'lon']].to_excel(writer, index=False, sheet_name='Lighting_Report')
+            workbook = writer.book
+            worksheet = writer.sheets['Lighting_Report']
+            header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
             
-            st.markdown("🔴 12م | 🟢 10م | 🔵 9م | 🟠 8م | 🟣 6م | ⚪ غير مسجل")
-        else:
-            st.warning("الرجاء اختيار طول واحد على الأقل من القائمة الجانبية.")
+            for i, col in enumerate(['الاسم', 'الطول', 'lat', 'lon']):
+                worksheet.set_column(i, i, 20)
+                worksheet.write(0, i, col, header_fmt)
 
-        # --- عرض الجدول ---
-        st.subheader("📄 معاينة البيانات المستخرجة")
-        st.dataframe(filtered_df[['name', 'height', 'lat', 'lon']], use_container_width=True)
+        st.download_button(
+            label="📥 اضغط هنا لتحميل ملف Excel",
+            data=output.getvalue(),
+            file_name="Lighting_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )

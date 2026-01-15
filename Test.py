@@ -6,8 +6,8 @@ import re
 import io
 import pydeck as pdk
 
-st.set_page_config(page_title="مستخرج بيانات الإنارة", layout="wide")
-st.title("📍 خريطة أعمدة الإنارة الملونة")
+st.set_page_config(page_title="محلل بيانات الإنارة", layout="wide")
+st.title("📍 خريطة الأعمدة الملونة (تحليل الوصف)")
 
 uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
 
@@ -22,8 +22,8 @@ def process_kmz(file):
         ns = {"kml": "http://www.opengis.net/kml/2.2"}
         data = []
 
-        # قاموس الألوان: [الأحمر, الأخضر, الأزرق]
-        color_map = {
+        # قاموس الألوان الثابتة [R, G, B]
+        color_lookup = {
             "12": [255, 0, 0],    # أحمر
             "10": [0, 255, 0],    # أخضر
             "9":  [0, 0, 255],    # أزرق
@@ -33,76 +33,94 @@ def process_kmz(file):
         }
 
         for pm in tree.xpath("//kml:Placemark", namespaces=ns):
-            # 1. استخراج الاسم
             name = pm.xpath("./kml:name/text()", namespaces=ns)
             full_name = name[0].strip() if name else "بدون اسم"
 
-            # 2. استخراج الوصف (حيث يوجد الطول)
+            # استخراج الوصف بالكامل (نبحث فيه عن الطول)
             desc = pm.xpath("./kml:description/text()", namespaces=ns)
-            ext_data = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
-            full_description = (desc[0] if desc else "") + " " + ext_data
+            ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
+            full_desc = (desc[0] if desc else "") + " " + ext_vals
 
-            # 3. استخراج الطول من الوصف باستخدام Regex
-            # نبحث عن الأرقام المشهورة لأطوال الأعمدة
-            height_search = re.search(r'\b(12|10|9|8|6)\b', full_description)
-            height_val = height_search.group(1) if height_search else "غير مسجل"
+            # البحث عن الطول: نبحث عن رقم محاط بحدود كلمات \b لضمان عدم أخذ جزء من رقم آخر
+            # الأرقام المدعومة هي 12, 10, 9, 8, 6
+            height_match = re.search(r'\b(12|10|9|8|6)\b', full_desc)
+            height_val = height_match.group(1) if height_match else "غير مسجل"
             
-            # 4. تحديد اللون بناءً على الطول المستخرج
-            rgb = color_map.get(height_val, [0, 0, 0])
+            # جلب اللون المخصص
+            rgb = color_lookup.get(height_val, [150, 150, 150])
 
-            # 5. استخراج الإحداثيات
             coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
             if coords:
-                lon, lat, _ = (coords[0].strip().split(',') + [0])[:3]
-                data.append({
-                    "name": full_name,
-                    "height": height_val,
-                    "lat": float(lat),
-                    "lon": float(lon),
-                    "r": rgb[0],
-                    "g": rgb[1],
-                    "b": rgb[2]
-                })
+                parts = coords[0].strip().split(',')
+                if len(parts) >= 2:
+                    data.append({
+                        "name": full_name,
+                        "height": height_val,
+                        "lat": float(parts[1]),
+                        "lon": float(parts[0]),
+                        "r": rgb[0],
+                        "g": rgb[1],
+                        "b": rgb[2],
+                        "full_description": full_desc[:50] + "..." # للمعاينة فقط
+                    })
 
         return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"حدث خطأ: {e}")
+        st.error(f"خطأ أثناء معالجة الملف: {e}")
         return None
 
 if uploaded_file:
     df = process_kmz(uploaded_file)
     
     if df is not None and not df.empty:
-        # عرض الخريطة باستخدام pydeck بدلاً من st.map
-        st.subheader(f"تم العثور على {len(df)} عمود")
-        
-        # إعداد طبقة النقاط الملونة
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            df,
-            get_position='[lon, lat]',
-            get_color='[r, g, b, 200]', # شفافية 200 من 255
-            get_radius=10,             # حجم الدائرة على الخريطة
-            pickable=True,
+        # --- قسم الفلاتر (شريط جانبي) ---
+        st.sidebar.header("🔍 تصفية الخريطة")
+        available_heights = sorted(df['height'].unique().tolist())
+        selected_heights = st.sidebar.multiselect(
+            "اختر الأطوال المراد عرضها:", 
+            available_heights, 
+            default=available_heights
         )
 
-        # إعداد الرؤية الافتراضية للخريطة
-        view_state = pdk.ViewState(
-            latitude=df['lat'].mean(),
-            longitude=df['lon'].mean(),
-            zoom=15
-        )
+        # فلترة البيانات بناءً على اختيار المستخدم
+        filtered_df = df[df['height'].isin(selected_heights)]
 
-        # رسم الخريطة مع "تلميحات" تظهر عند الوقوف بالماوس
-        st.pydeck_chart(pdk.Deck(
-            layers=[layer],
-            initial_view_state=view_state,
-            tooltip={"text": "العمود: {name}\nالطول: {height}م"}
-        ))
+        # --- الإحصائيات ---
+        st.subheader("📊 ملخص البيانات المفلترة")
+        cols = st.columns(len(selected_heights) if len(selected_heights) > 0 else 1)
+        for i, h in enumerate(selected_heights):
+            count = len(filtered_df[filtered_df['height'] == h])
+            cols[i % len(cols)].metric(f"طول {h}م", f"{count}")
 
-        # مفتاح الألوان للتوضيح
-        st.markdown("""
-        **مفتاح الألوان حسب الطول:** 🔴 12م | 🟢 10م | 🔵 9م | 🟠 8م | 🟣 6م | ⚪ غير مسجل
-        """)
+        # --- الخريطة الاحترافية (Pydeck) ---
+        st.subheader("📍 خريطة توزيع الأعمدة")
         
-        st.dataframe(df[['name', 'height', 'lat', 'lon']])
+        if not filtered_df.empty:
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                filtered_df,
+                get_position='[lon, lat]',
+                get_color='[r, g, b, 180]', # تلوين النقاط r,g,b من الجدول
+                get_radius=12,
+                pickable=True,
+            )
+
+            view_state = pdk.ViewState(
+                latitude=filtered_df['lat'].mean(),
+                longitude=filtered_df['lon'].mean(),
+                zoom=14
+            )
+
+            st.pydeck_chart(pdk.Deck(
+                layers=[layer],
+                initial_view_state=view_state,
+                tooltip={"text": "الاسم: {name}\nالطول المكتشف: {height}م"}
+            ))
+            
+            st.markdown("🔴 12م | 🟢 10م | 🔵 9م | 🟠 8م | 🟣 6م | ⚪ غير مسجل")
+        else:
+            st.warning("الرجاء اختيار طول واحد على الأقل من القائمة الجانبية.")
+
+        # --- عرض الجدول ---
+        st.subheader("📄 معاينة البيانات المستخرجة")
+        st.dataframe(filtered_df[['name', 'height', 'lat', 'lon']], use_container_width=True)

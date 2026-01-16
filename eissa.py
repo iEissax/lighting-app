@@ -96,4 +96,18 @@ if uploaded_file:
         
         # التنسيقات
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
-        cell_fmt = workbook.add_format({'
+        cell_fmt = workbook.add_format({'border': 1, 'align': 'center'})
+
+        for i, col in enumerate(result_df.columns):
+            # حساب العرض + مساحة أمان
+            max_len = max(result_df[col].astype(str).map(len).max(), len(col)) + 5
+            worksheet.set_column(i, i, max_len, cell_fmt)
+            worksheet.write(0, i, col, header_fmt)
+
+    st.success("تم تجهيز التقرير بنجاح!")
+    st.download_button(
+        label="📥 تحميل التقرير النهائي",
+        data=output.getvalue(),
+        file_name="Lighting_Report_Final.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )

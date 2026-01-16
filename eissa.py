@@ -23,7 +23,7 @@ def process_kmz(file):
         name_text = pm.xpath("./kml:name/text()", namespaces=ns)
         full_name = name_text[0].strip() if name_text else ""
 
-        # تحليل النمط: 17 (عمود) / 5 (فيدر)
+        # تحليل النمط: الرقم الأول عمود / الرقم الثاني فيدر
         numbers = re.findall(r'\d+', full_name)
         column_num = int(numbers[0]) if len(numbers) >= 1 else 0
         feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
@@ -42,7 +42,7 @@ def process_kmz(file):
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
         search_area = (desc_text + " " + ext_vals).strip()
 
-        # استخراج الملاحظة (مغروز أو مفقود)
+        # استخراج الملاحظة
         if "مغروز" in search_area:
             observation = "مغروز"
         elif "مفقود" in search_area:
@@ -54,7 +54,7 @@ def process_kmz(file):
         val_height = height_match.group(1) if height_match else "غير مسجل"
         lamps = 2 if "دبل" in search_area else (1 if "مفرد" in search_area else 0)
 
-        # الإحداثيات (Lat, Long)
+        # الإحداثيات
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
         lat_str, lon_str = "0.00000", "0.00000"
         if coords:
@@ -82,45 +82,18 @@ if uploaded_file:
     st.write("### معاينة البيانات:")
     st.dataframe(result_df)
     
-    # تحويل البيانات إلى Excel مع معالجة الخطأ
     output = io.BytesIO()
-    # استخدام سياق 'with' لضمان إغلاق الكائن بشكل صحيح
+    # تأكيد استخدام محرك xlsxwriter بشكل صريح
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        result_df.to_excel(writer, index=False, sheet_name='Lighting Report')
+        result_df.to_excel(writer, index=False, sheet_name='Sheet1')
         
-        # الوصول إلى الكائنات لتنسيقها
+        # ربط الكائنات بشكل مباشر
         workbook  = writer.book
-        worksheet = writer.sheets['Lighting Report']
+        worksheet = writer.sheets['Sheet1']
         
-        # ضبط الاتجاه من اليسار لليمين LTR
+        # ضبط الاتجاه (تم تصحيح السطر المسبب للخطأ)
         worksheet.set_right_to_left(False) 
         
-        # تعريف التنسيقات
-        header_fmt = workbook.add_format({
-            'bold': True, 
-            'bg_color': '#D7E4BC', 
-            'border': 1, 
-            'align': 'center', 
-            'valign': 'vcenter'
-        })
-        cell_fmt = workbook.add_format({
-            'border': 1, 
-            'align': 'center', 
-            'valign': 'vcenter'
-        })
-
-        # ضبط عرض الأعمدة تلقائياً وكتابة العناوين
-        for i, col in enumerate(result_df.columns):
-            # حساب العرض بناءً على أطول نص
-            max_len = max(result_df[col].astype(str).map(len).max(), len(col)) + 4
-            worksheet.set_column(i, i, max_len, cell_fmt)
-            # إعادة كتابة الرأس بالتنسيق المطلوب
-            worksheet.write(0, i, col, header_fmt)
-
-    st.success("تم تجهيز الملف بنجاح وبدون أخطاء!")
-    st.download_button(
-        label="📥 تحميل التقرير النهائي",
-        data=output.getvalue(),
-        file_name="Lighting_Report_Final.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # التنسيقات
+        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
+        cell_fmt = workbook.add_format({'

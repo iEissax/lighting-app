@@ -83,28 +83,26 @@ if uploaded_file:
     st.dataframe(result_df)
     
     output = io.BytesIO()
-    # تأكيد استخدام محرك xlsxwriter بشكل صريح
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        result_df.to_excel(writer, index=False, sheet_name='Sheet1')
+        result_df.to_excel(writer, index=False, sheet_name='MainReport')
         
-        # ربط الكائنات بشكل مباشر
         workbook  = writer.book
-        worksheet = writer.sheets['Sheet1']
+        worksheet = writer.sheets['MainReport']
         
-        # ضبط الاتجاه (تم تصحيح السطر المسبب للخطأ)
+        # تنسيق LTR ومنع أخطاء التنسيق
         worksheet.set_right_to_left(False) 
         
-        # التنسيقات
+        # تعريف التنسيقات بشكل سليم
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center'})
 
+        # ضبط العرض وكتابة العناوين
         for i, col in enumerate(result_df.columns):
-            # حساب العرض + مساحة أمان
             max_len = max(result_df[col].astype(str).map(len).max(), len(col)) + 5
             worksheet.set_column(i, i, max_len, cell_fmt)
             worksheet.write(0, i, col, header_fmt)
 
-    st.success("تم تجهيز التقرير بنجاح!")
+    st.success("تم إصلاح الكود وتجهيز الملف!")
     st.download_button(
         label="📥 تحميل التقرير النهائي",
         data=output.getvalue(),

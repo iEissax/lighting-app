@@ -143,3 +143,4 @@ if uploaded_file:
                     worksheet.write(row_num + 1, col_num, cell_value, fmt)
 
         st.download_button("📥 تحميل التقرير المرتب تسلسلياً (Excel)", output.getvalue(), "Lighting_Report_Sorted.xlsx")
+

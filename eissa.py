@@ -36,7 +36,7 @@ def process_kmz(file):
         if extra_num: formatted_name += f"/{extra_num}"
         if station_code: formatted_name = f"{station_code} {formatted_name}"
 
-        # البحث في الوصف والبيانات
+        # الوصف والبيانات
         desc = pm.xpath("./kml:description/text()", namespaces=ns)
         desc_text = desc[0] if desc else ""
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
@@ -65,42 +65,62 @@ def process_kmz(file):
         data.append({
             "المحطة": station_code,
             "الاسم المنسق": formatted_name,
-            "نوع الملاحظة": observation, # الخانة الجديدة المطلوبة
+            "نوع الملاحظة": observation,
             "طول العمود": val_height,
             "عدد الشمعات": lamps,
             "الإحداثيات (Lat, Long)": f"{lat_str},{lon_str}",
-            "f_num": feeder_num, # مخفي للترتيب
-            "c_num": column_num   # مخفي للترتيب
+            "f_num": feeder_num, 
+            "c_num": column_num   
         })
 
     df = pd.DataFrame(data)
-    # الترتيب: محطة -> فيدر -> عمود
     df = df.sort_values(by=['المحطة', 'f_num', 'c_num'], ascending=[True, True, True])
     return df.drop(columns=['f_num', 'c_num'])
 
 if uploaded_file:
     result_df = process_kmz(uploaded_file)
-    st.write("### معاينة البيانات المحدثة:")
+    st.write("### معاينة البيانات:")
     st.dataframe(result_df)
     
+    # تحويل البيانات إلى Excel مع معالجة الخطأ
     output = io.BytesIO()
+    # استخدام سياق 'with' لضمان إغلاق الكائن بشكل صحيح
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         result_df.to_excel(writer, index=False, sheet_name='Lighting Report')
         
+        # الوصول إلى الكائنات لتنسيقها
         workbook  = writer.book
         worksheet = writer.sheets['Lighting Report']
         
-        # تنسيق من اليسار لليمين LTR
+        # ضبط الاتجاه من اليسار لليمين LTR
         worksheet.set_right_to_left(False) 
         
-        # تنسيق العناوين والخلايا
-        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
-        cell_fmt = workbook.add_format({'border': 1, 'align': 'center'})
+        # تعريف التنسيقات
+        header_fmt = workbook.add_format({
+            'bold': True, 
+            'bg_color': '#D7E4BC', 
+            'border': 1, 
+            'align': 'center', 
+            'valign': 'vcenter'
+        })
+        cell_fmt = workbook.add_format({
+            'border': 1, 
+            'align': 'center', 
+            'valign': 'vcenter'
+        })
 
-        # ضبط عرض الأعمدة تلقائياً (توسيع الخلايا)
+        # ضبط عرض الأعمدة تلقائياً وكتابة العناوين
         for i, col in enumerate(result_df.columns):
-            column_len = max(result_df[col].astype(str).str.len().max(), len(col)) + 5
-            worksheet.set_column(i, i, column_len, cell_fmt)
+            # حساب العرض بناءً على أطول نص
+            max_len = max(result_df[col].astype(str).map(len).max(), len(col)) + 4
+            worksheet.set_column(i, i, max_len, cell_fmt)
+            # إعادة كتابة الرأس بالتنسيق المطلوب
             worksheet.write(0, i, col, header_fmt)
 
-    st.download_button("📥 تحميل التقرير النهائي (معدل)", output.getvalue(), "Lighting_Report_Updated.xlsx")
+    st.success("تم تجهيز الملف بنجاح وبدون أخطاء!")
+    st.download_button(
+        label="📥 تحميل التقرير النهائي",
+        data=output.getvalue(),
+        file_name="Lighting_Report_Final.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )

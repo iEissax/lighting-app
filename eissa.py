@@ -84,15 +84,15 @@ if uploaded_file:
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        result_df.to_excel(writer, index=False, sheet_name='MainReport')
+        result_df.to_excel(writer, index=False, sheet_name='Report')
         
         workbook  = writer.book
-        worksheet = writer.sheets['MainReport']
+        worksheet = writer.sheets['Report']
         
-        # تنسيق LTR ومنع أخطاء التنسيق
-        worksheet.set_right_to_left(False) 
+        # تم إزالة السطر المسبب للخطأ (set_right_to_left) 
+        # الوضع الافتراضي للإكسل هو LTR فلا داعي للقلق
         
-        # تعريف التنسيقات بشكل سليم
+        # تعريف التنسيقات
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center'})
 
@@ -102,7 +102,7 @@ if uploaded_file:
             worksheet.set_column(i, i, max_len, cell_fmt)
             worksheet.write(0, i, col, header_fmt)
 
-    st.success("تم إصلاح الكود وتجهيز الملف!")
+    st.success("تم تجهيز التقرير بنجاح!")
     st.download_button(
         label="📥 تحميل التقرير النهائي",
         data=output.getvalue(),

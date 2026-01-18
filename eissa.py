@@ -50,25 +50,19 @@ def process_kmz(file):
         else:
             observation = "طبيعي"
 
-       # --- تطوير استخراج طول العمود ---
-        # نبحث عن الأرقام الشهيرة للأعمدة (12, 10, 9, 8, 6) 
-        # سواء كانت لوحدها أو ملتصقة بحرف m أو م
-        height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م)?(?!\d)', search_area)
+       # --- استخراج طول العمود ---
+        # يبحث عن الأرقام (12, 10, 9, 8, 6) متبوعة بـ m أو م أو مسافة أو نهاية سطر
+        height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
         val_height = height_match.group(1) if height_match else "غير مسجل"
 
-        # --- تطوير استخراج عدد الشمعات ---
-        # الطريقة الأولى: البحث عن نمط "=" مثل 2/2=2 أو 1/1=1
-        lamps_match = re.search(r'=(\d+)', search_area)
-        if lamps_match:
-            lamps = int(lamps_match.group(1))
+        # --- استخراج عدد الشمعات ---
+        # القاعدة: إذا وجد 2/2 يسجل 2، إذا وجد 1/1 يسجل 1
+        if "2/2" in search_area:
+            lamps = 2
+        elif "1/1" in search_area:
+            lamps = 1
         else:
-            # الطريقة الثانية (الاحتياطية): الكلمات المفتاحية
-            if "دبل" in search_area or "ثنائي" in search_area:
-                lamps = 2
-            elif "مفرد" in search_area or "أحادي" in search_area:
-                lamps = 1
-            else:
-                lamps = 0
+            lamps = 0  # أو يمكنك وضع "غير مسجل" حسب رغبتك
 
         # الإحداثيات
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
@@ -125,4 +119,5 @@ if uploaded_file:
         file_name="Lighting_Report_Final.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 

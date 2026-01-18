@@ -28,9 +28,7 @@ def process_kmz(file):
         column_num = int(numbers[0]) if len(numbers) >= 1 else 0
         feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
         
-        # --- تحسين استخراج المحطة (مثال: 30ق) ---
-        # البحث عن أي نص يحتوي على حروف عربية أو إنجليزية ملتصقة بأرقام المحطة
-        # هذا الجزء سيلتقط "30ق" أو "ق30" من بداية الاسم
+        # استخراج المحطة (مثل 30ق أو ق30)
         station_match = re.match(r'([a-zA-Z\u0600-\u06FF]+\d+|\d+[a-zA-Z\u0600-\u06FF]+)', full_name)
         station_code = station_match.group(0) if station_match else ""
 
@@ -96,21 +94,25 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # التنسيقات
-        num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        # --- تحديث تنسيق الإحداثيات لتكون سداسية (6 أرقام عشرية) ---
+        num_fmt = workbook.add_format({'num_format': '0.000000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        red_num_fmt = workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.000000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        
+        # التنسيقات الأخرى
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
         station_col_fmt = workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         red_row_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        red_num_fmt = workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
 
+        # ضبط عناوين الأعمدة وتنسيقها
         for col_num, value in enumerate(export_df.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
             if "الاحداثيات" in value:
-                worksheet.set_column(col_num, col_num, 15, num_fmt)
+                worksheet.set_column(col_num, col_num, 18, num_fmt)
             else:
                 worksheet.set_column(col_num, col_num, 15, cell_fmt)
 
+        # كتابة البيانات وتطبيق الألوان والتنسيق السداسي
         for row_idx in range(len(result_df)):
             obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
             row_data = export_df.iloc[row_idx].values
@@ -118,6 +120,7 @@ if uploaded_file:
             
             for col_idx, cell_value in enumerate(row_data):
                 col_name = export_df.columns[col_idx]
+                
                 if is_red:
                     target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
                 elif col_idx == 0:
@@ -129,10 +132,10 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم ضبط صيغة اسم المحطة (مثل 30ق) بنجاح!")
+    st.success("تم تحديث الإحداثيات لتكون سداسية (6 خانات عشرية)!")
     st.download_button(
-        label="📥 تحميل التقرير النهائي المعتمد",
+        label="📥 تحميل التقرير النهائي (إحداثيات سداسية)",
         data=output.getvalue(),
-        file_name="Final_Lighting_Report.xlsx",
+        file_name="Lighting_Report_6_Decimals.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

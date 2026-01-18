@@ -63,10 +63,11 @@ def process_kmz(file):
             lat_val = float(coord_split[1])
             lon_val = float(coord_split[0])
 
+        # ترتيب البيانات المطلوب في القاموس ليعكس ترتيب الأعمدة لاحقاً
         data.append({
             "المحطة": station_code,
-            "رقم الفيدر": feeder_num, # تم التبديل هنا
-            "رقم العمود": column_num, # تم التبديل هنا
+            "رقم العمود": column_num,   # تم التبديل هنا ليصبح قبل الفيدر
+            "رقم الفيدر": feeder_num,   # تم التبديل هنا
             "طول العمود": val_height,
             "الذراع": lamps,
             "الاحداثيات x": lon_val,
@@ -75,7 +76,7 @@ def process_kmz(file):
         })
 
     df = pd.DataFrame(data)
-    # ترتيب البيانات
+    # ترتيب البيانات منطقياً (بناءً على القيم)
     df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
     return df
 
@@ -93,46 +94,34 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # --- تنسيق الإحداثيات لتكون خماسية ---
+        # تنسيق الإحداثيات الخماسية
         num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        
-        # تنسيق الرأس (رمادي داكن)
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        
-        # تنسيق الخلايا العادية
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        
-        # تنسيق عمود المحطة (رمادي جانبي)
         station_col_fmt = workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-
-        # تنسيق الصف الأحمر
         red_row_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        # تنسيق الصف الأحمر للإحداثيات (للحفاظ على الـ 5 خانات داخل اللون الأحمر)
         red_num_fmt = workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
 
         # تطبيق العناوين وتنسيق الأعمدة
         for col_num, value in enumerate(export_df.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
-            # تمييز أعمدة الإحداثيات (X و Y هما آخر عمودين)
             if "الاحداثيات" in value:
                 worksheet.set_column(col_num, col_num, 15, num_fmt)
             else:
                 worksheet.set_column(col_num, col_num, 15, cell_fmt)
 
-        # كتابة البيانات مع التنسيق الشرطي واللوني
+        # كتابة البيانات مع التنسيق الشرطي
         for row_idx in range(len(result_df)):
             obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
             row_data = export_df.iloc[row_idx].values
-            
             is_red = obs_val in ["مغروز", "مفقود"]
             
             for col_idx, cell_value in enumerate(row_data):
                 col_name = export_df.columns[col_idx]
                 
-                # اختيار التنسيق المناسب لكل خلية
                 if is_red:
                     target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
-                elif col_idx == 0: # عمود المحطة
+                elif col_idx == 0:
                     target_fmt = station_col_fmt
                 elif "الاحداثيات" in col_name:
                     target_fmt = num_fmt
@@ -141,7 +130,7 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم تحديث ترتيب الأعمدة وتنسيق الإحداثيات!")
+    st.success("تم عكس ترتيب أعمدة العمود والفيدر وتجهيز التقرير!")
     st.download_button(
         label="📥 تحميل التقرير النهائي المطور",
         data=output.getvalue(),

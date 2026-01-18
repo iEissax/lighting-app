@@ -26,21 +26,16 @@ def process_kmz(file):
         numbers = re.findall(r'\d+', full_name)
         column_num = int(numbers[0]) if len(numbers) >= 1 else 0
         feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
-        extra_num = numbers[2] if len(numbers) >= 3 else ""
-
+        
         station_part = re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name)
         station_code = station_part.group(0) if station_part else ""
-
-        formatted_name = f"{column_num}/{feeder_num}"
-        if extra_num: formatted_name += f"/{extra_num}"
-        if station_code: formatted_name = f"{station_code} {formatted_name}"
 
         desc = pm.xpath("./kml:description/text()", namespaces=ns)
         desc_text = desc[0] if desc else ""
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
         search_area = (desc_text + " " + ext_vals).strip()
 
-        # استخراج الملاحظة
+        # الملاحظة
         if "مغروز" in search_area:
             observation = "مغروز"
         elif "مفقود" in search_area:
@@ -48,81 +43,114 @@ def process_kmz(file):
         else:
             observation = "طبيعي"
 
-        # استخراج طول العمود
+        # طول العمود
         height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
-        val_height = height_match.group(1) if height_match else "غير مسجل"
+        val_height = height_match.group(1) if height_match else ""
 
-        # استخراج عدد الشمعات
+        # عدد الشمعات (الذراع)
         if "2/2" in search_area:
             lamps = 2
         elif "1/1" in search_area:
             lamps = 1
         else:
-            lamps = 0
+            lamps = ""
 
+        # الإحداثيات
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
-        lat_str, lon_str = "0.00000", "0.00000"
+        lat_val, lon_val = "", ""
         if coords:
             coord_split = coords[0].strip().split(',')
-            lat_str = "{:.5f}".format(float(coord_split[1]))
-            lon_str = "{:.5f}".format(float(coord_split[0]))
+            lat_val = float(coord_split[1])
+            lon_val = float(coord_split[0])
 
         data.append({
             "المحطة": station_code,
-            "الاسم المنسق": formatted_name,
-            "نوع الملاحظة": observation,
+            "رقم العمود": column_num,
+            "رقم الفيدر": feeder_num,
             "طول العمود": val_height,
-            "عدد الشمعات": lamps,
-            "الإحداثيات (Lat, Long)": f"{lat_str},{lon_str}",
-            "f_num": feeder_num, 
-            "c_num": column_num   
+            "الذراع": lamps,
+            "الاحداثيات x": lon_val,
+            "الاحداثيات y": lat_val,
+            "ملاحظة_داخلية": observation # للحكم على اللون فقط
         })
 
     df = pd.DataFrame(data)
-    df = df.sort_values(by=['المحطة', 'f_num', 'c_num'], ascending=[True, True, True])
-    return df.drop(columns=['f_num', 'c_num'])
+    df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
+    return df
 
 if uploaded_file:
     result_df = process_kmz(uploaded_file)
     st.write("### معاينة البيانات:")
-    st.dataframe(result_df)
+    st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        result_df.to_excel(writer, index=False, sheet_name='Report')
+        # استثناء العمود الداخلي من الطباعة
+        export_df = result_df.drop(columns=['ملاحظة_داخلية'])
+        export_df.to_excel(writer, index=False, sheet_name='Sheet1')
         
         workbook  = writer.book
-        worksheet = writer.sheets['Report']
+        worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # --- تعريف التنسيقات ---
-        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
-        cell_fmt = workbook.add_format({'border': 1, 'align': 'center'})
-        # تنسيق اللون الأحمر للصفوف المستهدفة
-        red_fmt = workbook.add_format({'bg_color': '#FF0000', 'font_color': '#FFFFFF', 'border': 1, 'align': 'center'})
-
-        # ضبط العرض وتنسيق العناوين
-        for i, col in enumerate(result_df.columns):
-            max_len = max(result_df[col].astype(str).map(len).max(), len(col)) + 5
-            worksheet.set_column(i, i, max_len, cell_fmt)
-            worksheet.write(0, i, col, header_fmt)
-
-        # --- إضافة التنسيق الشرطي للصف الكامل ---
-        # نحدد النطاق من الصف الثاني (1) حتى نهاية البيانات
-        # ونفحص العمود الثالث (C) الذي يحتوي على "نوع الملاحظة"
-        num_rows = len(result_df)
-        num_cols = len(result_df.columns)
+        # --- التنسيقات ---
+        # تنسيق الرأس (رمادي داكن كما في الصورة)
+        header_fmt = workbook.add_format({
+            'bold': True, 
+            'bg_color': '#A6A6A6', 
+            'border': 1, 
+            'align': 'center', 
+            'valign': 'vcenter'
+        })
         
-        worksheet.conditional_format(1, 0, num_rows, num_cols - 1, {
-            'type':     'formula',
-            'criteria': 'OR($C2="مغروز", $C2="مفقود")',
-            'format':   red_fmt
+        # تنسيق الخلايا العادية
+        cell_fmt = workbook.add_format({
+            'border': 1, 
+            'align': 'center', 
+            'valign': 'vcenter'
+        })
+        
+        # تنسيق عمود المحطة (رمادي جانبي)
+        station_col_fmt = workbook.add_format({
+            'bg_color': '#808080', 
+            'font_color': 'black', 
+            'border': 1, 
+            'align': 'center'
         })
 
-    st.success("تم تطبيق التنسيق الأحمر للملاحظات بنجاح!")
+        # تنسيق الصف الأحمر (للمفقود والمغروز)
+        red_row_fmt = workbook.add_format({
+            'bg_color': '#FF0000', 
+            'font_color': 'black', 
+            'border': 1, 
+            'align': 'center'
+        })
+
+        # تطبيق تنسيق العناوين وعرض الأعمدة
+        for col_num, value in enumerate(export_df.columns.values):
+            worksheet.write(0, col_num, value, header_fmt)
+            worksheet.set_column(col_num, col_num, 15, cell_fmt)
+
+        # تطبيق التنسيق الشرطي (تلوين الصف بناءً على القيمة المخفية في ملاحظة_داخلية)
+        for row_idx in range(len(result_df)):
+            obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
+            row_data = export_df.iloc[row_idx].values
+            
+            # تحديد التنسيق المناسب
+            current_fmt = red_row_fmt if obs_val in ["مغروز", "مفقود"] else cell_fmt
+            
+            # كتابة الصف
+            for col_idx, cell_value in enumerate(row_data):
+                # إذا كان أول عمود (المحطة)، نعطيه لوناً مختلفاً إلا إذا كان الصف أحمر
+                if col_idx == 0 and obs_val not in ["مغروز", "مفقود"]:
+                    worksheet.write(row_idx + 1, col_idx, cell_value, station_col_fmt)
+                else:
+                    worksheet.write(row_idx + 1, col_idx, cell_value, current_fmt)
+
+    st.success("تم محاكاة التنسيق المطلوب بنجاح!")
     st.download_button(
-        label="📥 تحميل التقرير النهائي الملون",
+        label="📥 تحميل التقرير النهائي (نفس تنسيق الصورة)",
         data=output.getvalue(),
-        file_name="Lighting_Report_Formatted.xlsx",
+        file_name="Street_Lighting_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

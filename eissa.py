@@ -47,7 +47,7 @@ def process_kmz(file):
         height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
         val_height = height_match.group(1) if height_match else ""
 
-        # عدد الشمعات (الذراع)
+        # عدد الشمعات (الذراع) - قاعدة 1/1 و 2/2
         if "2/2" in search_area:
             lamps = 2
         elif "1/1" in search_area:
@@ -55,9 +55,9 @@ def process_kmz(file):
         else:
             lamps = ""
 
-        # الإحداثيات
+        # الإحداثيات (استخراج كأرقام)
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
-        lat_val, lon_val = "", ""
+        lat_val, lon_val = 0.0, 0.0
         if coords:
             coord_split = coords[0].strip().split(',')
             lat_val = float(coord_split[1])
@@ -65,16 +65,17 @@ def process_kmz(file):
 
         data.append({
             "المحطة": station_code,
-            "رقم العمود": column_num,
-            "رقم الفيدر": feeder_num,
+            "رقم الفيدر": feeder_num, # تم التبديل هنا
+            "رقم العمود": column_num, # تم التبديل هنا
             "طول العمود": val_height,
             "الذراع": lamps,
             "الاحداثيات x": lon_val,
             "الاحداثيات y": lat_val,
-            "ملاحظة_داخلية": observation # للحكم على اللون فقط
+            "ملاحظة_داخلية": observation
         })
 
     df = pd.DataFrame(data)
+    # ترتيب البيانات
     df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
     return df
 
@@ -85,7 +86,6 @@ if uploaded_file:
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # استثناء العمود الداخلي من الطباعة
         export_df = result_df.drop(columns=['ملاحظة_داخلية'])
         export_df.to_excel(writer, index=False, sheet_name='Sheet1')
         
@@ -93,64 +93,58 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # --- التنسيقات ---
-        # تنسيق الرأس (رمادي داكن كما في الصورة)
-        header_fmt = workbook.add_format({
-            'bold': True, 
-            'bg_color': '#A6A6A6', 
-            'border': 1, 
-            'align': 'center', 
-            'valign': 'vcenter'
-        })
+        # --- تنسيق الإحداثيات لتكون خماسية ---
+        num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        
+        # تنسيق الرأس (رمادي داكن)
+        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         
         # تنسيق الخلايا العادية
-        cell_fmt = workbook.add_format({
-            'border': 1, 
-            'align': 'center', 
-            'valign': 'vcenter'
-        })
+        cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
         
         # تنسيق عمود المحطة (رمادي جانبي)
-        station_col_fmt = workbook.add_format({
-            'bg_color': '#808080', 
-            'font_color': 'black', 
-            'border': 1, 
-            'align': 'center'
-        })
+        station_col_fmt = workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
 
-        # تنسيق الصف الأحمر (للمفقود والمغروز)
-        red_row_fmt = workbook.add_format({
-            'bg_color': '#FF0000', 
-            'font_color': 'black', 
-            'border': 1, 
-            'align': 'center'
-        })
+        # تنسيق الصف الأحمر
+        red_row_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        # تنسيق الصف الأحمر للإحداثيات (للحفاظ على الـ 5 خانات داخل اللون الأحمر)
+        red_num_fmt = workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
 
-        # تطبيق تنسيق العناوين وعرض الأعمدة
+        # تطبيق العناوين وتنسيق الأعمدة
         for col_num, value in enumerate(export_df.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
-            worksheet.set_column(col_num, col_num, 15, cell_fmt)
+            # تمييز أعمدة الإحداثيات (X و Y هما آخر عمودين)
+            if "الاحداثيات" in value:
+                worksheet.set_column(col_num, col_num, 15, num_fmt)
+            else:
+                worksheet.set_column(col_num, col_num, 15, cell_fmt)
 
-        # تطبيق التنسيق الشرطي (تلوين الصف بناءً على القيمة المخفية في ملاحظة_داخلية)
+        # كتابة البيانات مع التنسيق الشرطي واللوني
         for row_idx in range(len(result_df)):
             obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
             row_data = export_df.iloc[row_idx].values
             
-            # تحديد التنسيق المناسب
-            current_fmt = red_row_fmt if obs_val in ["مغروز", "مفقود"] else cell_fmt
+            is_red = obs_val in ["مغروز", "مفقود"]
             
-            # كتابة الصف
             for col_idx, cell_value in enumerate(row_data):
-                # إذا كان أول عمود (المحطة)، نعطيه لوناً مختلفاً إلا إذا كان الصف أحمر
-                if col_idx == 0 and obs_val not in ["مغروز", "مفقود"]:
-                    worksheet.write(row_idx + 1, col_idx, cell_value, station_col_fmt)
+                col_name = export_df.columns[col_idx]
+                
+                # اختيار التنسيق المناسب لكل خلية
+                if is_red:
+                    target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
+                elif col_idx == 0: # عمود المحطة
+                    target_fmt = station_col_fmt
+                elif "الاحداثيات" in col_name:
+                    target_fmt = num_fmt
                 else:
-                    worksheet.write(row_idx + 1, col_idx, cell_value, current_fmt)
+                    target_fmt = cell_fmt
+                
+                worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم محاكاة التنسيق المطلوب بنجاح!")
+    st.success("تم تحديث ترتيب الأعمدة وتنسيق الإحداثيات!")
     st.download_button(
-        label="📥 تحميل التقرير النهائي (نفس تنسيق الصورة)",
+        label="📥 تحميل التقرير النهائي المطور",
         data=output.getvalue(),
-        file_name="Street_Lighting_Report.xlsx",
+        file_name="Lighting_Network_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

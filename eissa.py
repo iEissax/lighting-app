@@ -23,7 +23,6 @@ def process_kmz(file):
         name_text = pm.xpath("./kml:name/text()", namespaces=ns)
         full_name = name_text[0].strip() if name_text else ""
 
-        # تحليل النمط: الرقم الأول عمود / الرقم الثاني فيدر
         numbers = re.findall(r'\d+', full_name)
         column_num = int(numbers[0]) if len(numbers) >= 1 else 0
         feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
@@ -36,7 +35,6 @@ def process_kmz(file):
         if extra_num: formatted_name += f"/{extra_num}"
         if station_code: formatted_name = f"{station_code} {formatted_name}"
 
-        # الوصف والبيانات
         desc = pm.xpath("./kml:description/text()", namespaces=ns)
         desc_text = desc[0] if desc else ""
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
@@ -50,21 +48,18 @@ def process_kmz(file):
         else:
             observation = "طبيعي"
 
-       # --- استخراج طول العمود ---
-        # يبحث عن الأرقام (12, 10, 9, 8, 6) متبوعة بـ m أو م أو مسافة أو نهاية سطر
+        # استخراج طول العمود
         height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
         val_height = height_match.group(1) if height_match else "غير مسجل"
 
-        # --- استخراج عدد الشمعات ---
-        # القاعدة: إذا وجد 2/2 يسجل 2، إذا وجد 1/1 يسجل 1
+        # استخراج عدد الشمعات
         if "2/2" in search_area:
             lamps = 2
         elif "1/1" in search_area:
             lamps = 1
         else:
-            lamps = 0  # أو يمكنك وضع "غير مسجل" حسب رغبتك
+            lamps = 0
 
-        # الإحداثيات
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
         lat_str, lon_str = "0.00000", "0.00000"
         if coords:
@@ -98,26 +93,36 @@ if uploaded_file:
         
         workbook  = writer.book
         worksheet = writer.sheets['Report']
+        worksheet.right_to_left()
         
-        # تم إزالة السطر المسبب للخطأ (set_right_to_left) 
-        # الوضع الافتراضي للإكسل هو LTR فلا داعي للقلق
-        
-        # تعريف التنسيقات
+        # --- تعريف التنسيقات ---
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center'})
+        # تنسيق اللون الأحمر للصفوف المستهدفة
+        red_fmt = workbook.add_format({'bg_color': '#FF0000', 'font_color': '#FFFFFF', 'border': 1, 'align': 'center'})
 
-        # ضبط العرض وكتابة العناوين
+        # ضبط العرض وتنسيق العناوين
         for i, col in enumerate(result_df.columns):
             max_len = max(result_df[col].astype(str).map(len).max(), len(col)) + 5
             worksheet.set_column(i, i, max_len, cell_fmt)
             worksheet.write(0, i, col, header_fmt)
 
-    st.success("تم تجهيز التقرير بنجاح!")
+        # --- إضافة التنسيق الشرطي للصف الكامل ---
+        # نحدد النطاق من الصف الثاني (1) حتى نهاية البيانات
+        # ونفحص العمود الثالث (C) الذي يحتوي على "نوع الملاحظة"
+        num_rows = len(result_df)
+        num_cols = len(result_df.columns)
+        
+        worksheet.conditional_format(1, 0, num_rows, num_cols - 1, {
+            'type':     'formula',
+            'criteria': 'OR($C2="مغروز", $C2="مفقود")',
+            'format':   red_fmt
+        })
+
+    st.success("تم تطبيق التنسيق الأحمر للملاحظات بنجاح!")
     st.download_button(
-        label="📥 تحميل التقرير النهائي",
+        label="📥 تحميل التقرير النهائي الملون",
         data=output.getvalue(),
-        file_name="Lighting_Report_Final.xlsx",
+        file_name="Lighting_Report_Formatted.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-

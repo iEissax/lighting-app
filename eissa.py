@@ -1,157 +1,44 @@
 import streamlit as st
-import zipfile
 import pandas as pd
-from lxml import etree
-import re
 import io
 
-st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="centered")
-st.title("📂 مستخرج بيانات KMZ المطوّر")
+# إعدادات الصفحة
+st.set_page_config(page_title="مدير ملفات KMZ و Excel", layout="wide")
 
-uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
+st.title("📂 نظام إدارة الخرائط والبيانات المنفصلة")
+st.info("ارفع ملف KMZ وملف Excel الخاص به، وسيتم عزلهما في طبقة مستقلة.")
 
-def process_kmz(file):
-    with zipfile.ZipFile(file, 'r') as f:
-        kml_filename = [name for name in f.namelist() if name.endswith('.kml')][0]
-        kml_content = f.read(kml_filename)
+# 1. تهيئة مخزن البيانات في الحالة (Session State)
+if 'projects_list' not in st.session_state:
+    st.session_state.projects_list = []
 
-    tree = etree.fromstring(kml_content)
-    ns = {"kml": "http://www.opengis.net/kml/2.2"}
-    data = []
-
-    for pm in tree.xpath("//kml:Placemark", namespaces=ns):
-        name_text = pm.xpath("./kml:name/text()", namespaces=ns)
-        full_name = name_text[0].strip() if name_text else ""
-
-        numbers = re.findall(r'\d+', full_name)
-        column_num = int(numbers[0]) if len(numbers) >= 1 else 0
-        feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
-        
-        station_part = re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name)
-        station_code = station_part.group(0) if station_part else ""
-
-        desc = pm.xpath("./kml:description/text()", namespaces=ns)
-        desc_text = desc[0] if desc else ""
-        ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
-        search_area = (desc_text + " " + ext_vals).strip()
-
-        # تحسين متطور لاستخراج اسم الشارع أو الطريق أو الحي
-        # يبحث عن الكلمات المفتاحية: شارع، طريق، ممر، حي، جادة، حي، Street, Road
-        street_pattern = r'(?:شارع|طريق|ممر|حي|جادة|دائري|Street|Road|Ave|Way)\s+([\u0600-\u06FF\w\s]+?)(?=[,\n\r]|\d{2,}|$)'
-        street_match = re.search(street_pattern, search_area, re.IGNORECASE)
-        street_name = street_match.group(1).strip() if street_match else ""
-
-        # التفاصيل (مفقود / مغروز)
-        details = ""
-        if "مغروز" in search_area:
-            observation = "مغروز"
-            details = "مغروز"
-        elif "مفقود" in search_area:
-            observation = "مفقود"
-            details = "مفقود"
-        else:
-            observation = "طبيعي"
-            details = ""
-
-        # هاي ماست
-        is_highmast = any(kw in search_area.lower() for kw in ["هاي ماست", "هايماست", "highmast", "high mast"])
-        
-        if is_highmast:
-            val_height = "هاي ماست"
-            lamps = 6
-        else:
-            height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
-            val_height = height_match.group(1) if height_match else ""
-            
-            if any(keyword in search_area for keyword in ["2/2", "دبل"]):
-                lamps = 2
-            elif any(keyword in search_area for keyword in ["1/1", "مفرد"]):
-                lamps = 1
-            else:
-                lamps = ""
-
-        coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
-        lat_val, lon_val = 0.0, 0.0
-        if coords:
-            coord_split = coords[0].strip().split(',')
-            lat_val = float(coord_split[1])
-            lon_val = float(coord_split[0])
-
-        data.append({
-            "المحطة": station_code,
-            "رقم العمود": column_num,
-            "رقم الفيدر": feeder_num,
-            "طول العمود": val_height,
-            "الذراع": lamps,
-            "الاحداثيات x": lon_val,
-            "الاحداثيات y": lat_val,
-            "اسم الشارع": street_name,
-            "التفاصيل": details,
-            "ملاحظة_داخلية": observation
-        })
-
-    df = pd.DataFrame(data)
-    df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
-    return df
-
-if uploaded_file:
-    result_df = process_kmz(uploaded_file)
-    st.write("### معاينة البيانات المستخرجة:")
-    st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
+# --- منطقة التحكم (Side Bar) ---
+with st.sidebar:
+    st.header("➕ إضافة مشروع جديد")
+    project_name = st.text_input("اسم المشروع/الطبقة", placeholder="مثلاً: المنطقة الشمالية")
+    uploaded_kmz = st.file_uploader("ارفع ملف KMZ", type=['kmz'])
+    uploaded_excel = st.file_uploader("ارفع ملف Excel", type=['xlsx', 'xls'])
     
-    dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
-    dup_columns = result_df.duplicated(subset=['المحطة', 'رقم الفيدر', 'رقم العمود'], keep=False)
-    is_duplicated_any = dup_coords | dup_columns
+    if st.button("إضافة وتثبيت"):
+        if project_name and uploaded_kmz and uploaded_excel:
+            # تخزين البيانات في قاموس معزول تماماً
+            new_entry = {
+                "id": len(st.session_state.projects_list) + 1,
+                "name": project_name,
+                "kmz_filename": uploaded_kmz.name,
+                "excel_data": pd.read_excel(uploaded_excel)
+            }
+            st.session_state.projects_list.append(new_entry)
+            st.success(f"تمت إضافة {project_name} بنجاح!")
+        else:
+            st.error("يرجى إكمال جميع الحقول والملفات.")
+
+# --- منطقة العرض الرئيسية ---
+if not st.session_state.projects_list:
+    st.warning("لا توجد مشاريع مضافة حالياً. استخدم القائمة الجانبية للبدء.")
+else:
+    # عرض ملخص المشاريع المضافة
+    st.subheader(f"🗂️ الطبقات الحالية ({len(st.session_state.projects_list)})")
     
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        export_df = result_df.drop(columns=['ملاحظة_داخلية'])
-        export_df.to_excel(writer, index=False, sheet_name='Sheet1')
-        
-        workbook  = writer.book
-        worksheet = writer.sheets['Sheet1']
-        worksheet.right_to_left()
-        
-        # التنسيقات
-        formats = {
-            'num': workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
-            'header': workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
-            'cell': workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'}),
-            'station': workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
-            'red_row': workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
-            'red_num': workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
-            'blue_row': workbook.add_format({'bg_color': '#00B0F0', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
-            'blue_num': workbook.add_format({'bg_color': '#00B0F0', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        }
-
-        for col_num, value in enumerate(export_df.columns.values):
-            worksheet.write(0, col_num, value, formats['header'])
-            worksheet.set_column(col_num, col_num, 18)
-
-        for row_idx in range(len(result_df)):
-            is_red = result_df.iloc[row_idx]['ملاحظة_داخلية'] in ["مغروز", "مفقود"]
-            is_dup = is_duplicated_any.iloc[row_idx]
-            row_data = export_df.iloc[row_idx].values
-            
-            for col_idx, cell_value in enumerate(row_data):
-                col_name = export_df.columns[col_idx]
-                if is_red:
-                    fmt = formats['red_num'] if "الاحداثيات" in col_name else formats['red_row']
-                elif is_dup:
-                    fmt = formats['blue_num'] if "الاحداثيات" in col_name else formats['blue_row']
-                elif col_idx == 0: 
-                    fmt = formats['station']
-                elif "الاحداثيات" in col_name:
-                    fmt = formats['num']
-                else:
-                    fmt = formats['cell']
-                
-                worksheet.write(row_idx + 1, col_idx, cell_value, fmt)
-
-    st.success("تم تحديث الكود! البحث عن العناوين الآن يشمل: الشوارع، الطرق، الأحياء، والمسارات.")
-    st.download_button(
-        label="📥 تحميل التقرير النهائي المنسق",
-        data=output.getvalue(),
-        file_name="Final_Lighting_Report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    for project in st.session_state.projects_list:
+        with st.expander

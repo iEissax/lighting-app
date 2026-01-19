@@ -35,11 +35,12 @@ def process_kmz(file):
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
         search_area = (desc_text + " " + ext_vals).strip()
 
-        # استخراج اسم الشارع
-        street_match = re.search(r'(?:شارع|Street)\s+([^,\n0-9]+)', search_area)
+        # تحسين استخراج اسم الشارع: يبحث عن "شارع" أو "Street" ويأخذ الكلمات التالية لها
+        # يتوقف عند الفاصلة، أو السطر الجديد، أو إذا بدأت أرقام (إحداثيات)
+        street_match = re.search(r'(?:شارع|Street)\s+([\u0600-\u06FF\w\s]+?)(?=[,\n\r]|\d{2,}|$)', search_area)
         street_name = street_match.group(1).strip() if street_match else ""
 
-        # الملاحظة (التفاصيل)
+        # التفاصيل (مفقود / مغروز)
         details = ""
         if "مغروز" in search_area:
             observation = "مغروز"
@@ -51,27 +52,23 @@ def process_kmz(file):
             observation = "طبيعي"
             details = ""
 
-        # منطق "هاي ماست"
+        # هاي ماست
         is_highmast = any(kw in search_area.lower() for kw in ["هاي ماست", "هايماست", "highmast", "high mast"])
-
-        # طول العمود
+        
         if is_highmast:
             val_height = "هاي ماست"
+            lamps = 6
         else:
             height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
             val_height = height_match.group(1) if height_match else ""
+            
+            if any(keyword in search_area for keyword in ["2/2", "دبل"]):
+                lamps = 2
+            elif any(keyword in search_area for keyword in ["1/1", "مفرد"]):
+                lamps = 1
+            else:
+                lamps = ""
 
-        # عدد الشمعات (الذراع)
-        if is_highmast:
-            lamps = 6
-        elif any(keyword in search_area for keyword in ["2/2", "دبل"]):
-            lamps = 2
-        elif any(keyword in search_area for keyword in ["1/1", "مفرد"]):
-            lamps = 1
-        else:
-            lamps = ""
-
-        # الإحداثيات
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
         lat_val, lon_val = 0.0, 0.0
         if coords:
@@ -79,7 +76,6 @@ def process_kmz(file):
             lat_val = float(coord_split[1])
             lon_val = float(coord_split[0])
 
-        # ترتيب الأعمدة مع إضافة عمود "التفاصيل" في النهاية
         data.append({
             "المحطة": station_code,
             "رقم العمود": column_num,
@@ -90,7 +86,7 @@ def process_kmz(file):
             "الاحداثيات y": lat_val,
             "اسم الشارع": street_name,
             "التفاصيل": details,
-            "ملاحظة_داخلية": observation # للحفاظ على منطق التلوين
+            "ملاحظة_داخلية": observation
         })
 
     df = pd.DataFrame(data)
@@ -99,10 +95,9 @@ def process_kmz(file):
 
 if uploaded_file:
     result_df = process_kmz(uploaded_file)
-    st.write("### معاينة البيانات:")
+    st.write("### معاينة البيانات المستخرجة:")
     st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
     
-    # تحديد التكرارات
     dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
     dup_columns = result_df.duplicated(subset=['المحطة', 'رقم الفيدر', 'رقم العمود'], keep=False)
     is_duplicated_any = dup_coords | dup_columns
@@ -116,46 +111,43 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # التنسيقات
-        num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        station_col_fmt = workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        red_row_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        red_num_fmt = workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        blue_row_fmt = workbook.add_format({'bg_color': '#00B0F0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        blue_num_fmt = workbook.add_format({'bg_color': '#00B0F0', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        # تعريف التنسيقات (نفس التنسيقات السابقة)
+        formats = {
+            'num': workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+            'header': workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+            'cell': workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+            'station': workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+            'red_row': workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+            'red_num': workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+            'blue_row': workbook.add_format({'bg_color': '#00B0F0', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+            'blue_num': workbook.add_format({'bg_color': '#00B0F0', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        }
 
         for col_num, value in enumerate(export_df.columns.values):
-            worksheet.write(0, col_num, value, header_fmt)
-            if "الاحداثيات" in value:
-                worksheet.set_column(col_num, col_num, 15, num_fmt)
-            else:
-                worksheet.set_column(col_num, col_num, 18, cell_fmt)
+            worksheet.write(0, col_num, value, formats['header'])
+            worksheet.set_column(col_num, col_num, 18)
 
         for row_idx in range(len(result_df)):
-            obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
+            is_red = result_df.iloc[row_idx]['ملاحظة_داخلية'] in ["مغروز", "مفقود"]
             is_dup = is_duplicated_any.iloc[row_idx]
-            is_red = obs_val in ["مغروز", "مفقود"]
             row_data = export_df.iloc[row_idx].values
             
             for col_idx, cell_value in enumerate(row_data):
                 col_name = export_df.columns[col_idx]
-                
                 if is_red:
-                    target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
+                    fmt = formats['red_num'] if "الاحداثيات" in col_name else formats['red_row']
                 elif is_dup:
-                    target_fmt = blue_num_fmt if "الاحداثيات" in col_name else blue_row_fmt
+                    fmt = formats['blue_num'] if "الاحداثيات" in col_name else formats['blue_row']
                 elif col_idx == 0: 
-                    target_fmt = station_col_fmt
+                    fmt = formats['station']
                 elif "الاحداثيات" in col_name:
-                    target_fmt = num_fmt
+                    fmt = formats['num']
                 else:
-                    target_fmt = cell_fmt
+                    fmt = formats['cell']
                 
-                worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
+                worksheet.write(row_idx + 1, col_idx, cell_value, fmt)
 
-    st.success("تم إضافة عمود 'التفاصيل' وتحديث المنطق بنجاح!")
+    st.success("تم التحديث! الكود الآن أكثر ذكاءً في التقاط أسماء الشوارع.")
     st.download_button(
         label="📥 تحميل التقرير النهائي",
         data=output.getvalue(),

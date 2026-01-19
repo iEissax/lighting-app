@@ -3,3 +3,5 @@ pandas
 lxml
 xlsxwriter
 pydeck
+folium
+streamlit-folium

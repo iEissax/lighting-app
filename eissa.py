@@ -89,6 +89,9 @@ if uploaded_file:
     st.write("### معاينة البيانات:")
     st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
     
+    # تحديد الصفوف المكررة بناءً على الإحداثيات فقط
+    duplicated_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
+    
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         export_df = result_df.drop(columns=['ملاحظة_داخلية'])
@@ -98,13 +101,17 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # التنسيقات
+        # التنسيقات الأصلية
         num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
         station_col_fmt = workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         red_row_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         red_num_fmt = workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        
+        # التنسيقات الجديدة (اللون الأزرق للمكرر)
+        blue_row_fmt = workbook.add_format({'bg_color': '#00B0F0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        blue_num_fmt = workbook.add_format({'bg_color': '#00B0F0', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
 
         # تطبيق العناوين وتنسيق الأعمدة
         for col_num, value in enumerate(export_df.columns.values):
@@ -117,15 +124,19 @@ if uploaded_file:
         # كتابة البيانات مع التنسيق الشرطي
         for row_idx in range(len(result_df)):
             obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
+            is_duplicated = duplicated_coords.iloc[row_idx]
             row_data = export_df.iloc[row_idx].values
             is_red = obs_val in ["مغروز", "مفقود"]
             
             for col_idx, cell_value in enumerate(row_data):
                 col_name = export_df.columns[col_idx]
                 
+                # ترتيب الأولوية: الأحمر (مفقود/مغروز) ثم الأزرق (مكرر) ثم تنسيق المحطة
                 if is_red:
                     target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
-                elif col_idx == 0: # المحطة الآن في العمود الأول (Index 0)
+                elif is_duplicated:
+                    target_fmt = blue_num_fmt if "الاحداثيات" in col_name else blue_row_fmt
+                elif col_idx == 0: 
                     target_fmt = station_col_fmt
                 elif "الاحداثيات" in col_name:
                     target_fmt = num_fmt
@@ -134,11 +145,10 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم ترتيب الأعمدة: المحطة أولاً واسم الشارع آخراً!")
+    st.success("تم التعديل! سيتم تظليل الإحداثيات المكررة باللون الأزرق.")
     st.download_button(
         label="📥 تحميل التقرير النهائي",
         data=output.getvalue(),
         file_name="Lighting_Network_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-

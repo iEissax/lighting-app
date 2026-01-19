@@ -5,10 +5,11 @@ from lxml import etree
 import re
 import io
 
-st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="centered")
-st.title("📂 مستخرج بيانات KMZ")
+st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة - متعدد", layout="centered")
+st.title("📂 مستخرج بيانات KMZ (متعدد الملفات)")
 
-uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
+# تعديل هنا: إضافة accept_multiple_files=True
+uploaded_files = st.file_uploader("اختر ملفات KMZ", type=['kmz'], accept_multiple_files=True)
 
 def process_kmz(file):
     with zipfile.ZipFile(file, 'r') as f:
@@ -79,7 +80,6 @@ def process_kmz(file):
             lat_val = float(coord_split[1])
             lon_val = float(coord_split[0])
 
-        # ترتيب الأعمدة مع إضافة عمود "التفاصيل" في النهاية
         data.append({
             "المحطة": station_code,
             "رقم العمود": column_num,
@@ -90,19 +90,29 @@ def process_kmz(file):
             "الاحداثيات y": lat_val,
             "اسم الشارع": street_name,
             "التفاصيل": details,
-            "ملاحظة_داخلية": observation # للحفاظ على منطق التلوين
+            "ملاحظة_داخلية": observation 
         })
 
-    df = pd.DataFrame(data)
-    df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
-    return df
+    return pd.DataFrame(data)
 
-if uploaded_file:
-    result_df = process_kmz(uploaded_file)
-    st.write("### معاينة البيانات:")
+if uploaded_files:
+    all_dataframes = []
+    
+    # معالجة كل ملف مرفوع
+    for uploaded_file in uploaded_files:
+        df_single = process_kmz(uploaded_file)
+        all_dataframes.append(df_single)
+    
+    # دمج جميع الجداول في جدول واحد
+    result_df = pd.concat(all_dataframes, ignore_index=True)
+    
+    # ترتيب البيانات النهائية
+    result_df = result_df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
+    
+    st.write(f"### تم دمج {len(uploaded_files)} ملفات. معاينة البيانات:")
     st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
     
-    # تحديد التكرارات
+    # كود التنسيق والإكسيل (نفس منطقك السابق)
     dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
     dup_columns = result_df.duplicated(subset=['المحطة', 'رقم الفيدر', 'رقم العمود'], keep=False)
     is_duplicated_any = dup_coords | dup_columns
@@ -116,7 +126,7 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # التنسيقات
+        # تعريف التنسيقات
         num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
@@ -155,11 +165,10 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم إضافة عمود 'التفاصيل' وتحديث المنطق بنجاح!")
+    st.success(f"تمت معالجة جميع الملفات بنجاح!")
     st.download_button(
-        label="📥 تحميل التقرير النهائي",
+        label="📥 تحميل التقرير المدمج",
         data=output.getvalue(),
-        file_name="Lighting_Network_Report.xlsx",
+        file_name="Combined_Lighting_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-

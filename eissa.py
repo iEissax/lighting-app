@@ -4,12 +4,24 @@ import pandas as pd
 from lxml import etree
 import re
 import io
+import folium
+from streamlit_folium import st_folium
 
-st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة المطور", layout="wide")
-st.title("📂 مستخرج بيانات KMZ المتعدد")
+# إعدادات الصفحة لتحسين المظهر
+st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="wide")
 
-# تفعيل خاصية رفع أكثر من ملف في نفس الوقت
-uploaded_files = st.file_uploader("اختر ملفات KMZ (يمكنك اختيار أكثر من ملف)", type=['kmz'], accept_multiple_files=True)
+# تنسيق العنوان والشعار
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e1e4e8; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("📂 نظام استخراج ومعاينة بيانات KMZ")
+st.info("قم برفع ملفات KMZ؛ سيقوم النظام بتحليل كل ملف، عرض إحصائياته، رسم خريطته، وتجهيز ملف Excel منفصل.")
+
+uploaded_files = st.file_uploader("اختر ملفات KMZ", type=['kmz'], accept_multiple_files=True)
 
 def process_kmz(file):
     with zipfile.ZipFile(file, 'r') as f:
@@ -36,11 +48,9 @@ def process_kmz(file):
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
         search_area = (desc_text + " " + ext_vals).strip()
 
-        # استخراج اسم الشارع
         street_match = re.search(r'(?:شارع|Street)\s+([^,\n0-9]+)', search_area)
         street_name = street_match.group(1).strip() if street_match else ""
 
-        # الملاحظة (التفاصيل)
         details = ""
         if "مغروز" in search_area:
             observation = "مغروز"
@@ -88,59 +98,74 @@ def process_kmz(file):
         })
 
     df = pd.DataFrame(data)
-    df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
-    return df
+    return df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
 
-# معالجة كل ملف بشكل مستقل تماماً
 if uploaded_files:
-    st.write(f"### تم العثور على {len(uploaded_files)} ملفات:")
-    
     for i, file in enumerate(uploaded_files):
-        # صندوق منعزل لكل ملف (Expander) لترتيب العرض
-        with st.expander(f"📄 معالجة الملف: {file.name}", expanded=True):
+        with st.expander(f"📍 ملف: {file.name}", expanded=True):
             result_df = process_kmz(file)
-            st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']), use_container_width=True)
             
-            # منطق التكرار الخاص بهذا الملف فقط
+            # 1. شريط الإحصائيات (Metrics)
+            total_poles = len(result_df)
+            issues_poles = len(result_df[result_df['ملاحظة_داخلية'].isin(["مغروز", "مفقود"])])
+            normal_poles = total_poles - issues_poles
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("إجمالي الأعمدة", total_poles)
+            m2.metric("أعمدة طبيعية", normal_poles)
+            m3.metric("مغروز / مفقود", issues_poles, delta_color="inverse")
+
+            # 2. عرض الخريطة التفاعلية
+            st.write("#### معاينة جغرافية:")
+            if not result_df.empty:
+                # حساب مركز الخريطة بناءً على البيانات
+                map_center = [result_df['الاحداثيات y'].mean(), result_df['الاحداثيات x'].mean()]
+                m = folium.Map(location=map_center, zoom_start=16, control_scale=True)
+                
+                for _, row in result_df.iterrows():
+                    color = 'red' if row['ملاحظة_داخلية'] in ["مغروز", "مفقود"] else 'blue'
+                    folium.Marker(
+                        [row['الاحداثيات y'], row['الاحداثيات x']],
+                        popup=f"محطة: {row['المحطة']}<br>عمود: {row['رقم العمود']}<br>فيدر: {row['رقم الفيدر']}",
+                        icon=folium.Icon(color=color, icon='info-sign')
+                    ).add_to(m)
+                
+                st_folium(m, width=1200, height=400, key=f"map_{i}")
+
+            # 3. عرض البيانات ومعالجة التحميل
+            st.write("#### جدول البيانات:")
+            st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']), use_container_width=True)
+
+            # معالجة التكرارات وتصدير الإكسل (بنفس التنسيق اللوني الأصلي)
             dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
             dup_columns = result_df.duplicated(subset=['المحطة', 'رقم الفيدر', 'رقم العمود'], keep=False)
             is_duplicated_any = dup_coords | dup_columns
-            
-            # توليد ملف Excel خاص بهذا الملف تحديداً
+
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 export_df = result_df.drop(columns=['ملاحظة_داخلية'])
-                export_df.to_excel(writer, index=False, sheet_name='Data')
-                
-                workbook  = writer.book
-                worksheet = writer.sheets['Data']
+                export_df.to_excel(writer, index=False, sheet_name='Sheet1')
+                workbook = writer.book
+                worksheet = writer.sheets['Sheet1']
                 worksheet.right_to_left()
                 
-                # إعداد التنسيقات (نفس منطقك الأصلي)
+                # إعدادات التنسيق (نفس منطقك الأصلي)
                 header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center'})
                 cell_fmt = workbook.add_format({'border': 1, 'align': 'center'})
                 red_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center'})
                 blue_fmt = workbook.add_format({'bg_color': '#00B0F0', 'border': 1, 'align': 'center'})
-                
-                # كتابة البيانات وتطبيق التنسيق اللوني
+
                 for row_idx in range(len(result_df)):
                     obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
                     is_dup = is_duplicated_any.iloc[row_idx]
-                    
                     for col_idx, cell_value in enumerate(export_df.iloc[row_idx]):
-                        if obs_val in ["مغروز", "مفقود"]:
-                            fmt = red_fmt
-                        elif is_dup:
-                            fmt = blue_fmt
-                        else:
-                            fmt = cell_fmt
+                        fmt = red_fmt if obs_val in ["مغروز", "مفقود"] else (blue_fmt if is_dup else cell_fmt)
                         worksheet.write(row_idx + 1, col_idx, cell_value, fmt)
 
-            # زر تحميل مخصص لكل ملف
             st.download_button(
                 label=f"📥 تحميل تقرير {file.name}",
                 data=output.getvalue(),
                 file_name=f"Report_{file.name}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"btn_{i}" # مفتاح فريد لكل زر
+                key=f"btn_{i}"
             )

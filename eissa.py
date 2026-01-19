@@ -39,15 +39,19 @@ def process_kmz(file):
         street_match = re.search(r'(?:شارع|Street)\s+([^,\n0-9]+)', search_area)
         street_name = street_match.group(1).strip() if street_match else ""
 
-        # الملاحظة
+        # الملاحظة (التفاصيل)
+        details = ""
         if "مغروز" in search_area:
             observation = "مغروز"
+            details = "مغروز"
         elif "مفقود" in search_area:
             observation = "مفقود"
+            details = "مفقود"
         else:
             observation = "طبيعي"
+            details = ""
 
-        # منطق "هاي ماست" الجديد
+        # منطق "هاي ماست"
         is_highmast = any(kw in search_area.lower() for kw in ["هاي ماست", "هايماست", "highmast", "high mast"])
 
         # طول العمود
@@ -75,6 +79,7 @@ def process_kmz(file):
             lat_val = float(coord_split[1])
             lon_val = float(coord_split[0])
 
+        # ترتيب الأعمدة مع إضافة عمود "التفاصيل" في النهاية
         data.append({
             "المحطة": station_code,
             "رقم العمود": column_num,
@@ -84,7 +89,8 @@ def process_kmz(file):
             "الاحداثيات x": lon_val,
             "الاحداثيات y": lat_val,
             "اسم الشارع": street_name,
-            "ملاحظة_داخلية": observation
+            "التفاصيل": details,
+            "ملاحظة_داخلية": observation # للحفاظ على منطق التلوين
         })
 
     df = pd.DataFrame(data)
@@ -96,6 +102,7 @@ if uploaded_file:
     st.write("### معاينة البيانات:")
     st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
     
+    # تحديد التكرارات
     dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
     dup_columns = result_df.duplicated(subset=['المحطة', 'رقم الفيدر', 'رقم العمود'], keep=False)
     is_duplicated_any = dup_coords | dup_columns
@@ -109,6 +116,7 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
+        # التنسيقات
         num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
@@ -133,6 +141,7 @@ if uploaded_file:
             
             for col_idx, cell_value in enumerate(row_data):
                 col_name = export_df.columns[col_idx]
+                
                 if is_red:
                     target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
                 elif is_dup:
@@ -146,7 +155,7 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم التحديث! الكود يتعرف الآن على 'هاي ماست' ويظلل التكرارات بالأزرق.")
+    st.success("تم إضافة عمود 'التفاصيل' وتحديث المنطق بنجاح!")
     st.download_button(
         label="📥 تحميل التقرير النهائي",
         data=output.getvalue(),

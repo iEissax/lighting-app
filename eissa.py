@@ -47,12 +47,20 @@ def process_kmz(file):
         else:
             observation = "طبيعي"
 
+        # منطق "هاي ماست" الجديد
+        is_highmast = any(kw in search_area.lower() for kw in ["هاي ماست", "هايماست", "highmast", "high mast"])
+
         # طول العمود
-        height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
-        val_height = height_match.group(1) if height_match else ""
+        if is_highmast:
+            val_height = "هاي ماست"
+        else:
+            height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
+            val_height = height_match.group(1) if height_match else ""
 
         # عدد الشمعات (الذراع)
-        if any(keyword in search_area for keyword in ["2/2", "دبل"]):
+        if is_highmast:
+            lamps = 6
+        elif any(keyword in search_area for keyword in ["2/2", "دبل"]):
             lamps = 2
         elif any(keyword in search_area for keyword in ["1/1", "مفرد"]):
             lamps = 1
@@ -67,7 +75,6 @@ def process_kmz(file):
             lat_val = float(coord_split[1])
             lon_val = float(coord_split[0])
 
-        # الترتيب الجديد: المحطة أولاً، واسم الشارع آخراً
         data.append({
             "المحطة": station_code,
             "رقم العمود": column_num,
@@ -89,8 +96,9 @@ if uploaded_file:
     st.write("### معاينة البيانات:")
     st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
     
-    # تحديد الصفوف المكررة بناءً على الإحداثيات فقط
-    duplicated_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
+    dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
+    dup_columns = result_df.duplicated(subset=['المحطة', 'رقم الفيدر', 'رقم العمود'], keep=False)
+    is_duplicated_any = dup_coords | dup_columns
     
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -101,19 +109,15 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # التنسيقات الأصلية
         num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
         station_col_fmt = workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         red_row_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         red_num_fmt = workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        
-        # التنسيقات الجديدة (اللون الأزرق للمكرر)
         blue_row_fmt = workbook.add_format({'bg_color': '#00B0F0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         blue_num_fmt = workbook.add_format({'bg_color': '#00B0F0', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
 
-        # تطبيق العناوين وتنسيق الأعمدة
         for col_num, value in enumerate(export_df.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
             if "الاحداثيات" in value:
@@ -121,20 +125,17 @@ if uploaded_file:
             else:
                 worksheet.set_column(col_num, col_num, 18, cell_fmt)
 
-        # كتابة البيانات مع التنسيق الشرطي
         for row_idx in range(len(result_df)):
             obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
-            is_duplicated = duplicated_coords.iloc[row_idx]
-            row_data = export_df.iloc[row_idx].values
+            is_dup = is_duplicated_any.iloc[row_idx]
             is_red = obs_val in ["مغروز", "مفقود"]
+            row_data = export_df.iloc[row_idx].values
             
             for col_idx, cell_value in enumerate(row_data):
                 col_name = export_df.columns[col_idx]
-                
-                # ترتيب الأولوية: الأحمر (مفقود/مغروز) ثم الأزرق (مكرر) ثم تنسيق المحطة
                 if is_red:
                     target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
-                elif is_duplicated:
+                elif is_dup:
                     target_fmt = blue_num_fmt if "الاحداثيات" in col_name else blue_row_fmt
                 elif col_idx == 0: 
                     target_fmt = station_col_fmt
@@ -145,7 +146,7 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم التعديل! سيتم تظليل الإحداثيات المكررة باللون الأزرق.")
+    st.success("تم التحديث! الكود يتعرف الآن على 'هاي ماست' ويظلل التكرارات بالأزرق.")
     st.download_button(
         label="📥 تحميل التقرير النهائي",
         data=output.getvalue(),

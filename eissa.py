@@ -6,7 +6,7 @@ import re
 import io
 
 st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="centered")
-st.title("📂 مستخرج بيانات KMZ")
+st.title("📂 مستخرج بيانات KMZ المطوّر")
 
 uploaded_file = st.file_uploader("اختر ملف KMZ", type=['kmz'])
 
@@ -35,9 +35,10 @@ def process_kmz(file):
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
         search_area = (desc_text + " " + ext_vals).strip()
 
-        # تحسين استخراج اسم الشارع: يبحث عن "شارع" أو "Street" ويأخذ الكلمات التالية لها
-        # يتوقف عند الفاصلة، أو السطر الجديد، أو إذا بدأت أرقام (إحداثيات)
-        street_match = re.search(r'(?:شارع|Street)\s+([\u0600-\u06FF\w\s]+?)(?=[,\n\r]|\d{2,}|$)', search_area)
+        # تحسين متطور لاستخراج اسم الشارع أو الطريق أو الحي
+        # يبحث عن الكلمات المفتاحية: شارع، طريق، ممر، حي، جادة، حي، Street, Road
+        street_pattern = r'(?:شارع|طريق|ممر|حي|جادة|دائري|Street|Road|Ave|Way)\s+([\u0600-\u06FF\w\s]+?)(?=[,\n\r]|\d{2,}|$)'
+        street_match = re.search(street_pattern, search_area, re.IGNORECASE)
         street_name = street_match.group(1).strip() if street_match else ""
 
         # التفاصيل (مفقود / مغروز)
@@ -111,7 +112,7 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # تعريف التنسيقات (نفس التنسيقات السابقة)
+        # التنسيقات
         formats = {
             'num': workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
             'header': workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'}),
@@ -147,10 +148,10 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, fmt)
 
-    st.success("تم التحديث! الكود الآن أكثر ذكاءً في التقاط أسماء الشوارع.")
+    st.success("تم تحديث الكود! البحث عن العناوين الآن يشمل: الشوارع، الطرق، الأحياء، والمسارات.")
     st.download_button(
-        label="📥 تحميل التقرير النهائي",
+        label="📥 تحميل التقرير النهائي المنسق",
         data=output.getvalue(),
-        file_name="Lighting_Network_Report.xlsx",
+        file_name="Final_Lighting_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

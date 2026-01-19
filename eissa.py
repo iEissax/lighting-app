@@ -23,23 +23,30 @@ def process_kmz(file):
         name_text = pm.xpath("./kml:name/text()", namespaces=ns)
         full_name = name_text[0].strip() if name_text else ""
 
+        # استخراج أرقام (رقم العمود ورقم الفيدر)
         numbers = re.findall(r'\d+', full_name)
         column_num = int(numbers[0]) if len(numbers) >= 1 else 0
         feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
         
-        station_part = re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name)
-        station_code = station_part.group(0) if station_part else ""
+        # استخراج رمز المحطة (البحث عن نص أو كلمة محطة)
+        station_match = re.search(r'(?:محطة|Station|ST)\s*([a-zA-Z\u0600-\u06FF0-9]+)', full_name, re.IGNORECASE)
+        if station_match:
+            station_code = station_match.group(1)
+        else:
+            # إذا لم يجد كلمة محطة، يأخذ الجزء النصي كما في السابق
+            station_part = re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name)
+            station_code = station_part.group(0) if station_part else ""
 
         desc = pm.xpath("./kml:description/text()", namespaces=ns)
         desc_text = desc[0] if desc else ""
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
         search_area = (desc_text + " " + ext_vals).strip()
 
-        # استخراج اسم الشارع
+        # استخراج اسم الشارع (ليكون في آخر عمود)
         street_match = re.search(r'(?:شارع|Street)\s+([^,\n0-9]+)', search_area)
         street_name = street_match.group(1).strip() if street_match else ""
 
-        # الملاحظة
+        # الملاحظة (مغروز أو مفقود)
         if "مغروز" in search_area:
             observation = "مغروز"
         elif "مفقود" in search_area:
@@ -67,7 +74,7 @@ def process_kmz(file):
             lat_val = float(coord_split[1])
             lon_val = float(coord_split[0])
 
-        # الترتيب الجديد: المحطة أولاً، واسم الشارع آخراً
+        # الترتيب المطلوب: المحطة أولاً ثم أرقام الأعمدة ثم الشارع آخراً
         data.append({
             "المحطة": station_code,
             "رقم العمود": column_num,
@@ -81,12 +88,13 @@ def process_kmz(file):
         })
 
     df = pd.DataFrame(data)
+    # ترتيب الصفوف منطقياً
     df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
     return df
 
 if uploaded_file:
     result_df = process_kmz(uploaded_file)
-    st.write("### معاينة البيانات:")
+    st.write("### معاينة البيانات المستخرجة:")
     st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
     
     output = io.BytesIO()
@@ -96,9 +104,9 @@ if uploaded_file:
         
         workbook  = writer.book
         worksheet = writer.sheets['Sheet1']
-        worksheet.right_to_left()
+        worksheet.right_to_left() # جعل الملف من اليمين لليسار
         
-        # التنسيقات
+        # إعدادات التنسيق
         num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
@@ -114,7 +122,7 @@ if uploaded_file:
             else:
                 worksheet.set_column(col_num, col_num, 18, cell_fmt)
 
-        # كتابة البيانات مع التنسيق الشرطي
+        # كتابة البيانات مع التلوين (الرمادي للمحطة، والأحمر للملاحظات الخاصة)
         for row_idx in range(len(result_df)):
             obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
             row_data = export_df.iloc[row_idx].values
@@ -125,7 +133,7 @@ if uploaded_file:
                 
                 if is_red:
                     target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
-                elif col_idx == 0: # المحطة الآن في العمود الأول (Index 0)
+                elif col_idx == 0: # تلوين عمود المحطة بالرمادي (أول عمود)
                     target_fmt = station_col_fmt
                 elif "الاحداثيات" in col_name:
                     target_fmt = num_fmt
@@ -134,9 +142,9 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم ترتيب الأعمدة: المحطة أولاً واسم الشارع آخراً!")
+    st.success("تم تحديث الكود للتعرف على المحطة ووضعها في أول عمود، والشارع في آخر عمود.")
     st.download_button(
-        label="📥 تحميل التقرير النهائي",
+        label="📥 تحميل التقرير المحدث",
         data=output.getvalue(),
         file_name="Lighting_Network_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

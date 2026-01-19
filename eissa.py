@@ -9,7 +9,7 @@ from streamlit_folium import st_folium
 
 # إعدادات الصفحة
 st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="wide")
-st.title("💡 مستخرج بيانات KMZ (تنسيق Excel محسّن)")
+st.title("💡 مستخرج بيانات KMZ (تنسيق نصوص باللون الأسود)")
 
 uploaded_files = st.file_uploader("اختر ملفات KMZ", type=['kmz'], accept_multiple_files=True)
 
@@ -38,7 +38,6 @@ def process_kmz(file):
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
         search_area = (desc_text + " " + ext_vals).strip()
 
-        # منطق تحديد "جداري"
         is_highmast = any(kw in search_area.lower() for kw in ["هاي ماست", "هايماست", "highmast"])
         is_wall = any(kw in search_area for kw in ["جدار", "جداري", "Wall", "wall"])
 
@@ -86,7 +85,6 @@ if uploaded_files:
     for i, file in enumerate(uploaded_files):
         with st.expander(f"📁 ملف: {file.name}", expanded=True):
             result_df = process_kmz(file)
-            st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']), use_container_width=True)
             
             # منطق التكرارات
             dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
@@ -102,20 +100,32 @@ if uploaded_files:
                 worksheet = writer.sheets['Sheet1']
                 worksheet.right_to_left()
                 
-                # --- تعريف التنسيقات المطلوبة ---
-                header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-                station_col_fmt = workbook.add_format({'bg_color': '#808080', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-                cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-                num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-                red_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-                blue_fmt = workbook.add_format({'bg_color': '#00B0F0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+                # --- تعديل التنسيقات ليكون الخط أسود دائماً ('font_color': 'black') ---
+                header_fmt = workbook.add_format({
+                    'bold': True, 'bg_color': '#A6A6A6', 'font_color': 'black', 'border': 1, 'align': 'center', 'valign': 'vcenter'
+                })
+                station_col_fmt = workbook.add_format({
+                    'bg_color': '#D9D9D9', 'font_color': 'black', 'border': 1, 'align': 'center', 'valign': 'vcenter'
+                })
+                cell_fmt = workbook.add_format({
+                    'font_color': 'black', 'border': 1, 'align': 'center', 'valign': 'vcenter'
+                })
+                num_fmt = workbook.add_format({
+                    'num_format': '0.00000', 'font_color': 'black', 'border': 1, 'align': 'center', 'valign': 'vcenter'
+                })
+                red_fmt = workbook.add_format({
+                    'bg_color': '#FF0000', 'font_color': 'black', 'border': 1, 'align': 'center', 'valign': 'vcenter'
+                })
+                blue_fmt = workbook.add_format({
+                    'bg_color': '#00B0F0', 'font_color': 'black', 'border': 1, 'align': 'center', 'valign': 'vcenter'
+                })
 
                 # تنسيق العناوين (الصف رقم 1)
                 for col_num, value in enumerate(export_df.columns.values):
                     worksheet.write(0, col_num, value, header_fmt)
                     worksheet.set_column(col_num, col_num, 18)
 
-                # كتابة البيانات وتطبيق التنسيق الشرطي
+                # كتابة البيانات وتطبيق التنسيق الشرطي مع الخط الأسود
                 for row_idx in range(len(result_df)):
                     obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
                     is_dup = is_duplicated_any.iloc[row_idx]
@@ -123,12 +133,11 @@ if uploaded_files:
                     for col_idx, cell_value in enumerate(export_df.iloc[row_idx]):
                         col_name = export_df.columns[col_idx]
                         
-                        # تحديد التنسيق الأساسي
                         if obs_val in ["مغروز", "مفقود"]:
                             target_fmt = red_fmt
                         elif is_dup:
                             target_fmt = blue_fmt
-                        elif col_idx == 0:  # العمود A (المحطة) تلوين رمادي
+                        elif col_idx == 0:  # العمود الأول (A)
                             target_fmt = station_col_fmt
                         else:
                             target_fmt = num_fmt if "الاحداثيات" in col_name else cell_fmt

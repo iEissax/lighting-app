@@ -47,10 +47,10 @@ def process_kmz(file):
         height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
         val_height = height_match.group(1) if height_match else ""
 
-        # عدد الشمعات (الذراع) - قاعدة 1/1 و 2/2
-        if "2/2" in search_area:
+        # عدد الشمعات (الذراع) - قاعدة دبل/مفرد و 1/1 و 2/2
+        if any(keyword in search_area for keyword in ["2/2", "دبل"]):
             lamps = 2
-        elif "1/1" in search_area:
+        elif any(keyword in search_area for keyword in ["1/1", "مفرد"]):
             lamps = 1
         else:
             lamps = ""
@@ -137,3 +137,4 @@ if uploaded_file:
         file_name="Lighting_Network_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+

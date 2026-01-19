@@ -7,20 +7,20 @@ import io
 import folium
 from streamlit_folium import st_folium
 
-# إعدادات الصفحة لتحسين المظهر
+# 1. إعدادات الصفحة والواجهة
 st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة", layout="wide")
 
-# تنسيق العنوان والشعار
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e1e4e8; }
+    .stMetric { background-color: #f8f9fa; padding: 10px; border-radius: 10px; border: 1px solid #dce1e6; }
+    .stExpander { border: 1px solid #007BFF; border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("📂 نظام استخراج ومعاينة بيانات KMZ")
-st.info("قم برفع ملفات KMZ؛ سيقوم النظام بتحليل كل ملف، عرض إحصائياته، رسم خريطته، وتجهيز ملف Excel منفصل.")
+st.title("📂 نظام معالجة ملفات KMZ وبيانات الإنارة")
+st.write("ارفع ملفاتك لمعالجتها وعرضها على الخريطة بشكل منفصل.")
 
+# 2. رفع الملفات المتعددة
 uploaded_files = st.file_uploader("اختر ملفات KMZ", type=['kmz'], accept_multiple_files=True)
 
 def process_kmz(file):
@@ -53,94 +53,71 @@ def process_kmz(file):
 
         details = ""
         if "مغروز" in search_area:
-            observation = "مغروز"
-            details = "مغروز"
+            observation, details = "مغروز", "مغروز"
         elif "مفقود" in search_area:
-            observation = "مفقود"
-            details = "مفقود"
+            observation, details = "مفقود", "مفقود"
         else:
-            observation = "طبيعي"
-            details = ""
+            observation, details = "طبيعي", ""
 
         is_highmast = any(kw in search_area.lower() for kw in ["هاي ماست", "هايماست", "highmast", "high mast"])
 
         if is_highmast:
-            val_height = "هاي ماست"
-            lamps = 6
+            val_height, lamps = "هاي ماست", 6
         else:
             height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
             val_height = height_match.group(1) if height_match else ""
-            if any(keyword in search_area for keyword in ["2/2", "دبل"]):
-                lamps = 2
-            elif any(keyword in search_area for keyword in ["1/1", "مفرد"]):
-                lamps = 1
-            else:
-                lamps = ""
+            lamps = 2 if any(kw in search_area for kw in ["2/2", "دبل"]) else (1 if any(kw in search_area for kw in ["1/1", "مفرد"]) else "")
 
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
         lat_val, lon_val = 0.0, 0.0
         if coords:
             coord_split = coords[0].strip().split(',')
-            lat_val = float(coord_split[1])
-            lon_val = float(coord_split[0])
+            lat_val, lon_val = float(coord_split[1]), float(coord_split[0])
 
         data.append({
-            "المحطة": station_code,
-            "رقم العمود": column_num,
-            "رقم الفيدر": feeder_num,
-            "طول العمود": val_height,
-            "الذراع": lamps,
-            "الاحداثيات x": lon_val,
-            "الاحداثيات y": lat_val,
-            "اسم الشارع": street_name,
-            "التفاصيل": details,
+            "المحطة": station_code, "رقم العمود": column_num, "رقم الفيدر": feeder_num,
+            "طول العمود": val_height, "الذراع": lamps, "الاحداثيات x": lon_val,
+            "الاحداثيات y": lat_val, "اسم الشارع": street_name, "التفاصيل": details,
             "ملاحظة_داخلية": observation 
         })
 
-    df = pd.DataFrame(data)
-    return df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
+    df = pd.DataFrame(data).sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
+    return df
 
+# 3. دورة المعالجة والعرض
 if uploaded_files:
     for i, file in enumerate(uploaded_files):
-        with st.expander(f"📍 ملف: {file.name}", expanded=True):
+        with st.expander(f"📍 معالجة الملف: {file.name}", expanded=True):
             result_df = process_kmz(file)
             
-            # 1. شريط الإحصائيات (Metrics)
-            total_poles = len(result_df)
-            issues_poles = len(result_df[result_df['ملاحظة_داخلية'].isin(["مغروز", "مفقود"])])
-            normal_poles = total_poles - issues_poles
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("إجمالي الأعمدة", total_poles)
-            m2.metric("أعمدة طبيعية", normal_poles)
-            m3.metric("مغروز / مفقود", issues_poles, delta_color="inverse")
+            # إحصائيات سريعة
+            c1, c2, c3 = st.columns(3)
+            c1.metric("إجمالي الأعمدة", len(result_df))
+            c2.metric("طبيعي", len(result_df[result_df['ملاحظة_داخلية'] == "طبيعي"]))
+            c3.metric("ملاحظات (أحمر)", len(result_df[result_df['ملاحظة_داخلية'] != "طبيعي"]))
 
-            # 2. عرض الخريطة التفاعلية
-            st.write("#### معاينة جغرافية:")
+            # عرض الخريطة
             if not result_df.empty:
-                # حساب مركز الخريطة بناءً على البيانات
-                map_center = [result_df['الاحداثيات y'].mean(), result_df['الاحداثيات x'].mean()]
-                m = folium.Map(location=map_center, zoom_start=16, control_scale=True)
-                
+                st.write("### معاينة الخريطة:")
+                m = folium.Map(location=[result_df['الاحداثيات y'].mean(), result_df['الاحداثيات x'].mean()], zoom_start=15)
                 for _, row in result_df.iterrows():
                     color = 'red' if row['ملاحظة_داخلية'] in ["مغروز", "مفقود"] else 'blue'
                     folium.Marker(
                         [row['الاحداثيات y'], row['الاحداثيات x']],
-                        popup=f"محطة: {row['المحطة']}<br>عمود: {row['رقم العمود']}<br>فيدر: {row['رقم الفيدر']}",
-                        icon=folium.Icon(color=color, icon='info-sign')
+                        popup=f"محطة: {row['المحطة']} | عمود: {row['رقم العمود']}",
+                        icon=folium.Icon(color=color)
                     ).add_to(m)
-                
-                st_folium(m, width=1200, height=400, key=f"map_{i}")
+                st_folium(m, width=1100, height=400, key=f"map_{i}")
 
-            # 3. عرض البيانات ومعالجة التحميل
-            st.write("#### جدول البيانات:")
+            # جدول المعاينة
+            st.write("### بيانات الجدول:")
             st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']), use_container_width=True)
-
-            # معالجة التكرارات وتصدير الإكسل (بنفس التنسيق اللوني الأصلي)
+            
+            # تصدير الإكسل بتنسيقاتك الأصلية
             dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
             dup_columns = result_df.duplicated(subset=['المحطة', 'رقم الفيدر', 'رقم العمود'], keep=False)
             is_duplicated_any = dup_coords | dup_columns
-
+            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 export_df = result_df.drop(columns=['ملاحظة_داخلية'])
@@ -149,7 +126,7 @@ if uploaded_files:
                 worksheet = writer.sheets['Sheet1']
                 worksheet.right_to_left()
                 
-                # إعدادات التنسيق (نفس منطقك الأصلي)
+                # تعريف التنسيقات
                 header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center'})
                 cell_fmt = workbook.add_format({'border': 1, 'align': 'center'})
                 red_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center'})
@@ -163,7 +140,7 @@ if uploaded_files:
                         worksheet.write(row_idx + 1, col_idx, cell_value, fmt)
 
             st.download_button(
-                label=f"📥 تحميل تقرير {file.name}",
+                label=f"📥 تحميل إكسل {file.name}",
                 data=output.getvalue(),
                 file_name=f"Report_{file.name}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

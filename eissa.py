@@ -28,12 +28,9 @@ def process_kmz(file):
         column_num = int(numbers[0]) if len(numbers) >= 1 else ""
         feeder_num = int(numbers[1]) if len(numbers) >= 2 else ""
         
-        # التعرف على المحطة
-        station_match = re.search(r'(?:محطة|Station|ST|ق)\s*([a-zA-Z\u0600-\u06FF0-9]*)', full_name, re.IGNORECASE)
-        station_code = station_match.group(0).strip() if station_match else ""
-        if not station_code:
-            station_part = re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name)
-            station_code = station_part.group(0) if station_part else ""
+        # استخراج رمز المحطة (مثل "ق")
+        station_part = re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name)
+        station_code = station_part.group(0) if station_part else ""
 
         desc = pm.xpath("./kml:description/text()", namespaces=ns)
         desc_text = desc[0] if desc else ""
@@ -44,16 +41,15 @@ def process_kmz(file):
         street_match = re.search(r'(?:شارع|Street)\s+([^,\n0-9]+)', search_area)
         street_name = street_match.group(1).strip() if street_match else ""
 
-        # الملاحظة (للتلوين الأحمر)
+        # الملاحظة (للتلوين)
         observation = "طبيعي"
         if "مغروز" in search_area: observation = "مغروز"
         elif "مفقود" in search_area: observation = "مفقود"
 
-        # طول العمود
+        # طول العمود والذراع
         height_match = re.search(r'(12|10|9|8|6)\s*(?:m|م|(?=\s|$))', search_area)
         val_height = height_match.group(1) if height_match else ""
-
-        # الذراع (دبل/مفرد)
+        
         lamps = ""
         if any(kw in search_area for kw in ["2/2", "دبل"]): lamps = 2
         elif any(kw in search_area for kw in ["1/1", "مفرد"]): lamps = 1
@@ -66,7 +62,6 @@ def process_kmz(file):
             lat_val = float(coord_split[1])
             lon_val = float(coord_split[0])
 
-        # الترتيب طبقاً للصورة: المحطة، رقم العمود، رقم الفيدر، طول العمود، الذراع، الاحداثيات x، الاحداثيات y، اسم الشارع
         data.append({
             "المحطة": station_code,
             "رقم العمود": column_num,
@@ -80,13 +75,28 @@ def process_kmz(file):
         })
 
     df = pd.DataFrame(data)
-    # فرز البيانات لضمان الترتيب التسلسلي
     df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
-    return df
+    
+    # منطق إضافة كلمة "محطة" في أول صف من كل مجموعة
+    final_data = []
+    groups = df.groupby('المحطة', sort=False)
+    for name, group in groups:
+        # إضافة صف "محطة" في البداية
+        station_row = {col: "" for col in df.columns}
+        station_row["المحطة"] = "محطة"
+        station_row["رقم العمود"] = group.iloc[0]["رقم العمود"] if not group.empty else ""
+        station_row["ملاحظة_داخلية"] = "header_station" # علامة للتنسيق
+        final_data.append(station_row)
+        
+        # إضافة باقي الأعمدة التابعة للمحطة
+        for _, row in group.iterrows():
+            final_data.append(row.to_dict())
+            
+    return pd.DataFrame(final_data)
 
 if uploaded_file:
     result_df = process_kmz(uploaded_file)
-    st.write("### معاينة الجدول (نفس ترتيب الصورة):")
+    st.write("### معاينة الجدول النهائي:")
     st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']), use_container_width=True)
     
     output = io.BytesIO()
@@ -98,51 +108,41 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left() 
 
-        # تعريف التنسيقات بناءً على الصورة
+        # التنسيقات
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        # تنسيق العمود الأول (الرمادي الغامق كما في الصورة)
         station_col_fmt = workbook.add_format({'bg_color': '#7F7F7F', 'font_color': 'white', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        # تنسيق الإحداثيات (5 أرقام عشرية)
         coord_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        # التنسيق الأحمر للحالات الخاصة
         red_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
 
-        # ضبط عرض الأعمدة
-        worksheet.set_column('A:A', 12) # المحطة
-        worksheet.set_column('B:C', 12) # أرقام الأعمدة والفيدر
-        worksheet.set_column('D:E', 12) # الطول والذراع
-        worksheet.set_column('F:G', 18) # الإحداثيات
-        worksheet.set_column('H:H', 25) # اسم الشارع
+        worksheet.set_column('A:E', 12)
+        worksheet.set_column('F:G', 18, coord_fmt)
+        worksheet.set_column('H:H', 25)
 
-        # كتابة العناوين بتنسيق الصورة
         for col_num, value in enumerate(export_df.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
 
-        # كتابة البيانات وتطبيق التنسيق اللوني
         for row_idx in range(len(result_df)):
             obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
-            is_red = obs_val in ["مغروز", "مفقود"]
             
             for col_idx in range(len(export_df.columns)):
                 cell_value = export_df.iloc[row_idx, col_idx]
-                col_name = export_df.columns[col_idx]
                 
-                # اختيار التنسيق المناسب لكل خلية
-                if is_red:
+                # تطبيق التنسيق
+                if obs_val in ["مغروز", "مفقود"]:
                     current_fmt = red_fmt
-                elif col_idx == 0: # عمود المحطة
+                elif col_idx == 0:
                     current_fmt = station_col_fmt
-                elif "الاحداثيات" in col_name:
-                    current_fmt = coord_fmt
                 else:
                     current_fmt = cell_fmt
                 
-                worksheet.write(row_idx + 1, col_idx, cell_value, current_fmt)
+                # كتابة القيمة (مع معالجة القيم الفارغة في صف المحطة)
+                val = cell_value if cell_value != "" else ""
+                worksheet.write(row_idx + 1, col_idx, val, current_fmt)
 
     st.download_button(
-        label="📥 تحميل ملف Excel بنفس تنسيق الصورة",
+        label="📥 تحميل التقرير بالتنسيق النهائي",
         data=output.getvalue(),
-        file_name="Lighting_Report_Formatted.xlsx",
+        file_name="Lighting_Network_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

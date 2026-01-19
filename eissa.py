@@ -35,6 +35,10 @@ def process_kmz(file):
         ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
         search_area = (desc_text + " " + ext_vals).strip()
 
+        # استخراج اسم الشارع
+        street_match = re.search(r'(?:شارع|Street)\s+([^,\n0-9]+)', search_area)
+        street_name = street_match.group(1).strip() if street_match else ""
+
         # الملاحظة
         if "مغروز" in search_area:
             observation = "مغروز"
@@ -65,9 +69,10 @@ def process_kmz(file):
 
         # ترتيب البيانات المطلوب في القاموس ليعكس ترتيب الأعمدة لاحقاً
         data.append({
+            "اسم الشارع": street_name,
             "المحطة": station_code,
-            "رقم العمود": column_num,   # تم التبديل هنا ليصبح قبل الفيدر
-            "رقم الفيدر": feeder_num,   # تم التبديل هنا
+            "رقم العمود": column_num,
+            "رقم الفيدر": feeder_num,
             "طول العمود": val_height,
             "الذراع": lamps,
             "الاحداثيات x": lon_val,
@@ -76,7 +81,7 @@ def process_kmz(file):
         })
 
     df = pd.DataFrame(data)
-    # ترتيب البيانات منطقياً (بناءً على القيم)
+    # ترتيب البيانات منطقياً
     df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
     return df
 
@@ -94,7 +99,7 @@ if uploaded_file:
         worksheet = writer.sheets['Sheet1']
         worksheet.right_to_left()
         
-        # تنسيق الإحداثيات الخماسية
+        # تنسيق الإحداثيات الخماسية والتنسيقات العامة
         num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
@@ -108,7 +113,7 @@ if uploaded_file:
             if "الاحداثيات" in value:
                 worksheet.set_column(col_num, col_num, 15, num_fmt)
             else:
-                worksheet.set_column(col_num, col_num, 15, cell_fmt)
+                worksheet.set_column(col_num, col_num, 18, cell_fmt) # وسعنا العمود قليلاً لاسم الشارع
 
         # كتابة البيانات مع التنسيق الشرطي
         for row_idx in range(len(result_df)):
@@ -121,7 +126,7 @@ if uploaded_file:
                 
                 if is_red:
                     target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
-                elif col_idx == 0:
+                elif col_idx == 1: # تلوين عمود المحطة (الآن أصبح الفهرس 1 بسبب إضافة اسم الشارع في 0)
                     target_fmt = station_col_fmt
                 elif "الاحداثيات" in col_name:
                     target_fmt = num_fmt
@@ -130,11 +135,10 @@ if uploaded_file:
                 
                 worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
 
-    st.success("تم عكس ترتيب أعمدة العمود والفيدر وتجهيز التقرير!")
+    st.success("تم إضافة عمود اسم الشارع وتجهيز التقرير بنجاح!")
     st.download_button(
-        label="📥 تحميل التقرير النهائي المطور",
+        label="📥 تحميل التقرير النهائي مع أسماء الشوارع",
         data=output.getvalue(),
         file_name="Lighting_Network_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-

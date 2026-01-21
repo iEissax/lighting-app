@@ -6,9 +6,9 @@ import re
 import io
 
 st.set_page_config(page_title="مستخرج بيانات شبكة الإنارة - المطور", layout="centered")
-st.title("📂 مستخرج بيانات KMZ (دعم شامل للأرقام والصيغ)")
+st.title("📂 مستخرج بيانات KMZ (استخراج الطول المتسلسل)")
 
-# دالة لتحويل الأرقام العربية (١٢٣) إلى إنجليزية (123) لضمان المعالجة
+# دالة تحويل الأرقام لضمان التعرف على الأطوال المكتوبة بالعربي
 def convert_arabic_numbers(text):
     if not text: return ""
     arabic_numbers = '٠١٢٣٤٥٦٧٨٩'
@@ -16,7 +16,6 @@ def convert_arabic_numbers(text):
     translation_table = str.maketrans(arabic_numbers, english_numbers)
     return text.translate(translation_table)
 
-# تحميل الملفات
 uploaded_files = st.file_uploader("اختر ملفات KMZ", type=['kmz'], accept_multiple_files=True)
 
 def process_kmz(file):
@@ -29,71 +28,44 @@ def process_kmz(file):
     data = []
 
     for pm in tree.xpath("//kml:Placemark", namespaces=ns):
+        # 1. استخراج الاسم الأساسي
         name_text = pm.xpath("./kml:name/text()", namespaces=ns)
         full_name = name_text[0].strip() if name_text else ""
         
-        # تحويل الأرقام في الاسم فوراً
+        # 2. استخراج الوصف (Description) وهو المكان المتوقع للأطوال المتسلسلة
+        desc = pm.xpath("./kml:description/text()", namespaces=ns)
+        desc_text = desc[0].strip() if desc else ""
+        
+        # تحويل الأرقام في الوصف والاسم
         full_name_eng = convert_arabic_numbers(full_name)
+        desc_text_eng = convert_arabic_numbers(desc_text)
 
+        # استخراج رقم العمود (للترتيب)
         numbers = re.findall(r'\d+', full_name_eng)
         column_num = int(numbers[0]) if len(numbers) >= 1 else 0
         feeder_num = int(numbers[1]) if len(numbers) >= 2 else 0
-        
-        station_part = re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name_eng)
-        station_code = station_part.group(0) if station_part else ""
 
-        desc = pm.xpath("./kml:description/text()", namespaces=ns)
-        desc_text = desc[0] if desc else ""
-        ext_vals = " ".join(pm.xpath(".//kml:Data/kml:value/text()", namespaces=ns))
-        
-        # دمج وتحويل منطقة البحث بالكامل (اسم + وصف + بيانات)
-        search_area = convert_arabic_numbers((full_name + " " + desc_text + " " + ext_vals).strip()).lower()
-
-        # استخراج اسم الشارع
-        street_match = re.search(r'(?:شارع|street)\s+([^,\n0-9]+)', search_area)
-        street_name = street_match.group(1).strip() if street_match else ""
-
-        # الملاحظة (التفاصيل)
-        details = ""
-        observation = "طبيعي"
-        if "مغروز" in search_area:
-            observation = "مغروز"
-            details = "مغروز"
-        elif "مفقود" in search_area:
-            observation = "مفقود"
-            details = "مفقود"
-
-        # --- منطق التعرف المطور على طول العمود والذراع ---
+        # --- استخراج الطول من الوصف ---
         val_height = ""
-        lamps = ""
-
-        # 1. البحث عن صيغة 12/2/2 أو 16/1/1 (انجليزي أو عربي تم تحويله)
-        complex_match = re.search(r'(\d{1,2})[/-](\d)[/-](\d)', search_area)
+        # البحث عن الأطوال الشائعة (16, 12, 10, 9, 8, 6) في نص الوصف
+        # الرمز \b يضمن استخراج الرقم المستقل (مثلاً 12 وليس 120)
+        height_match = re.search(r'\b(16|12|10|9|8|6)\b', desc_text_eng)
         
-        # 2. الكلمات الدلالية للأنواع الخاصة
-        is_highmast = any(kw in search_area for kw in ["هاي ماست", "هايماست", "highmast", "high mast"])
-        is_wall = any(kw in search_area for kw in ["جداري", "wall", "جدار"])
-
-        if complex_match:
-            val_height = complex_match.group(1)
-            lamps = int(complex_match.group(2))
-        elif is_highmast:
-            val_height = "هاي ماست"
-            lamps = 6
-        elif is_wall:
+        if height_match:
+            val_height = height_match.group(1)
+        elif "جداري" in desc_text or "wall" in desc_text.lower():
             val_height = "جداري"
-            if any(kw in search_area for kw in ["2/2", "دبل", "مزدوج", "ثنائي"]): lamps = 2
-            else: lamps = 1
-        else:
-            # البحث عن الأطوال (شاملاً 16)
-            height_match = re.search(r'\b(16|12|10|9|8|6)\b', search_area)
-            val_height = height_match.group(1) if height_match else ""
-            
-            # تحديد الذراع من الكلمات الدلالية الموسعة
-            if any(kw in search_area for kw in ["2/2", "دبل", "مزدوج", "ثنائي", "مزدوجة"]):
-                lamps = 2
-            elif any(kw in search_area for kw in ["1/1", "مفرد", "فردي", "واحدة"]):
-                lamps = 1
+        elif "هاي ماست" in desc_text or "highmast" in desc_text.lower():
+            val_height = "هاي ماست"
+
+        # --- استخراج الذراع ---
+        lamps = ""
+        if any(kw in desc_text_eng for kw in ["2/2", "٢/٢", "دبل", "مزدوج"]):
+            lamps = 2
+        elif any(kw in desc_text_eng for kw in ["1/1", "١/١", "مفرد"]):
+            lamps = 1
+        elif val_height == "هاي ماست":
+            lamps = 6
 
         # الإحداثيات
         coords = pm.xpath(".//kml:coordinates/text()", namespaces=ns)
@@ -104,89 +76,38 @@ def process_kmz(file):
             lon_val = float(coord_split[0])
 
         data.append({
-            "المحطة": station_code,
+            "المحطة": re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name_eng).group(0) if re.search(r'[a-zA-Z\u0600-\u06FF]+', full_name_eng) else "",
             "رقم العمود": column_num,
             "رقم الفيدر": feeder_num,
             "طول العمود": val_height,
             "الذراع": lamps,
             "الاحداثيات x": lon_val,
             "الاحداثيات y": lat_val,
-            "اسم الشارع": street_name,
-            "التفاصيل": details,
-            "ملاحظة_داخلية": observation 
+            "الوصف": desc_text # لكي تراجع ما تم استخراجه
         })
 
     return pd.DataFrame(data)
 
 if uploaded_files:
-    all_dataframes = []
-    for uploaded_file in uploaded_files:
-        df_single = process_kmz(uploaded_file)
-        all_dataframes.append(df_single)
+    all_dfs = [process_kmz(f) for f in uploaded_files]
+    result_df = pd.concat(all_dfs, ignore_index=True)
     
-    result_df = pd.concat(all_dataframes, ignore_index=True)
+    # الترتيب حسب رقم العمود لضمان ظهور التسلسل بشكل صحيح
     result_df = result_df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'])
     
-    st.write(f"### تم دمج {len(uploaded_files)} ملفات. معاينة البيانات:")
-    st.dataframe(result_df.drop(columns=['ملاحظة_داخلية']))
+    st.write(f"### معاينة البيانات المتسلسلة ({len(result_df)} عمود):")
+    st.dataframe(result_df)
     
-    # التمييز اللوني والتكرارات
-    dup_coords = result_df.duplicated(subset=['الاحداثيات x', 'الاحداثيات y'], keep=False)
-    dup_columns = result_df.duplicated(subset=['المحطة', 'رقم الفيدر', 'رقم العمود'], keep=False)
-    is_duplicated_any = dup_coords | dup_columns
-    
+    # تصدير إكسيل
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        export_df = result_df.drop(columns=['ملاحظة_داخلية'])
-        export_df.to_excel(writer, index=False, sheet_name='Sheet1')
-        
-        workbook  = writer.book
-        worksheet = writer.sheets['Sheet1']
+        result_df.to_excel(writer, index=False, sheet_name='Data')
+        workbook = writer.book
+        worksheet = writer.sheets['Data']
         worksheet.right_to_left()
-        
-        # التنسيقات
-        num_fmt = workbook.add_format({'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#A6A6A6', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        cell_fmt = workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        station_col_fmt = workbook.add_format({'bg_color': '#808080', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        red_row_fmt = workbook.add_format({'bg_color': '#FF0000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        red_num_fmt = workbook.add_format({'bg_color': '#FF0000', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        blue_row_fmt = workbook.add_format({'bg_color': '#00B0F0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        blue_num_fmt = workbook.add_format({'bg_color': '#00B0F0', 'num_format': '0.00000', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
-
-        for col_num, value in enumerate(export_df.columns.values):
+        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
+        for col_num, value in enumerate(result_df.columns.values):
             worksheet.write(0, col_num, value, header_fmt)
-            if "الاحداثيات" in value:
-                worksheet.set_column(col_num, col_num, 15, num_fmt)
-            else:
-                worksheet.set_column(col_num, col_num, 18, cell_fmt)
+            worksheet.set_column(col_num, col_num, 15)
 
-        for row_idx in range(len(result_df)):
-            obs_val = result_df.iloc[row_idx]['ملاحظة_داخلية']
-            is_dup = is_duplicated_any.iloc[row_idx]
-            is_red = obs_val in ["مغروز", "مفقود"]
-            row_data = export_df.iloc[row_idx].values
-            
-            for col_idx, cell_value in enumerate(row_data):
-                col_name = export_df.columns[col_idx]
-                
-                if is_red:
-                    target_fmt = red_num_fmt if "الاحداثيات" in col_name else red_row_fmt
-                elif is_dup:
-                    target_fmt = blue_num_fmt if "الاحداثيات" in col_name else blue_row_fmt
-                elif col_idx == 0: 
-                    target_fmt = station_col_fmt
-                elif "الاحداثيات" in col_name:
-                    target_fmt = num_fmt
-                else:
-                    target_fmt = cell_fmt
-                
-                worksheet.write(row_idx + 1, col_idx, cell_value, target_fmt)
-
-    st.success(f"تمت المعالجة بنجاح!")
-    st.download_button(
-        label="📥 تحميل التقرير النهائي المنسق",
-        data=output.getvalue(),
-        file_name="Lighting_Network_Report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.download_button("📥 تحميل التقرير المتسلسل (Excel)", output.getvalue(), "Lighting_Sequence_Report.xlsx")

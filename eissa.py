@@ -175,3 +175,4 @@ if uploaded_files:
         file_name="Combined_Lighting_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+احفظ هذا الكود

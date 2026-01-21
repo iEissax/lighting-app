@@ -108,50 +108,37 @@ def process_kmz(file):
 
 
 
-    # --- منطق مخصص لتطبيق Map Marker والتعرف على الأطوال ---
+    # 1. البحث في النص (الاسم + الوصف + الحقول المخصصة)
+        search_area = (full_name + " " + desc_text + " " + ext_vals).strip().lower()
+
+        # 2. تعريف المتغيرات أولاً (لتجنب NameError)
+        is_highmast = any(kw in search_area for kw in ["هاي ماست", "هايماست", "highmast", "high mast"])
+        is_wall = any(kw in search_area for kw in ["جداري", "wall", "جدار"])
+
+        # 3. تحديد طول العمود بناءً على التعريفات السابقة
         if is_highmast:
             val_height = "هاي ماست"
         elif is_wall:
             val_height = "جداري"
         else:
-            # 1. البحث عن نمط: رقم يتبعه كلمة متر أو حرف م (مثال: 12متر، 10 م، 8م)
-            # تم إضافة \s* للتعامل مع المسافات الاختيارية
-            height_match = re.search(r'(\d{1,2})\s*(?:متر|م|m|meter)\b', search_area.lower())
-            
+            # البحث عن رقم يتبعه (م، متر، m)
+            height_match = re.search(r'(\d{1,2})\s*(?:متر|م|m|meter)\b', search_area)
             if height_match:
                 val_height = height_match.group(1)
             else:
-                # 2. محاولة استخراج الأطوال القياسية حتى لو لم يكتب خلفها "متر" 
-                # (12, 10, 8, 6) بشرط أن تكون أرقام منفصلة لكي لا تختلط برقم العمود
-                standard_heights = re.findall(r'\b(12|10|9|8|6)\b', search_area)
-                
-                # إذا وجدنا أرقاماً، نختار الرقم الذي لا يتطابق مع رقم العمود أو الفيدر (إذا أمكن)
-                # أو نأخذ آخر رقم يظهر في الوصف لأنه غالباً ما يكون الطول في Map Marker
-                if standard_heights:
-                    val_height = standard_heights[-1] 
-                else:
-                    val_height = ""
+                # البحث عن الأرقام القياسية كخيار احتياطي
+                fallback = re.findall(r'\b(12|10|9|8|6)\b', search_area)
+                val_height = fallback[-1] if fallback else ""
 
-
-
-        # عدد الشمعات (الذراع)
-
+        # 4. عدد الشمعات (الذراع)
         if is_highmast:
-
             lamps = 6
-
-        elif any(keyword in search_area for keyword in ["2/2", "دبل"]):
-
+        elif any(kw in search_area for kw in ["2/2", "دبل", "double"]):
             lamps = 2
-
-        elif any(keyword in search_area for keyword in ["1/1", "مفرد"]):
-
+        elif any(kw in search_area for kw in ["1/1", "مفرد", "single"]):
             lamps = 1
-
         else:
-
             lamps = ""
-
 
 
         # الإحداثيات
@@ -345,4 +332,5 @@ if uploaded_files:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     )
+
 

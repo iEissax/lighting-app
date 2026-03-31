@@ -1,7 +1,8 @@
 import streamlit as st
 import simplekml
-from fastkml import kml
+import xml.etree.ElementTree as ET
 import io
+import re
 
 st.set_page_config(page_title="مخطط مسارات الإنارة", layout="centered")
 
@@ -12,44 +13,40 @@ uploaded_file = st.file_uploader("اختر ملف KML", type=['kml'])
 
 if uploaded_file is not None:
     try:
-        # قراءة محتوى الملف
-        kml_content = uploaded_file.read()
-        k_obj = kml.KML()
-        k_obj.from_string(kml_content)
+        # قراءة محتوى الملف كنص
+        kml_bytes = uploaded_file.read()
+        kml_text = kml_bytes.decode("utf-8")
+        
+        # تنظيف النص من الـ Namespaces لسهولة البحث عن الإحداثيات
+        clean_xml = re.sub(r'\sxmlns="[^"]+"', '', kml_text)
+        root = ET.fromstring(clean_xml)
         
         points = []
 
-        # دالة للبحث عن الإحداثيات بطريقة آمنة
-        def get_points(feature_list):
-            for feature in feature_list:
-                # التحقق من وجود هندسة (نقطة)
-                if hasattr(feature, 'geometry') and feature.geometry is not None:
-                    if feature.geometry.geom_type == 'Point':
-                        points.append((feature.geometry.x, feature.geometry.y))
-                
-                # البحث في العناصر الفرعية (مجلدات أو وثائق)
-                if hasattr(feature, 'features'):
-                    # هنا حل المشكلة: التأكد هل هي دالة أم قائمة
-                    sub_features = feature.features
-                    if callable(sub_features):
-                        get_points(list(sub_features()))
-                    else:
-                        get_points(list(sub_features))
-
-        # بدء البحث عن النقاط من جذر الملف
-        get_points(list(k_obj.features()))
+        # البحث عن كل وسوم الإحداثيات في الملف
+        for coord_tag in root.iter('coordinates'):
+            coords_text = coord_tag.text.strip()
+            if coords_text:
+                # تقسيم النص (قد يحتوي الملف على أكثر من نقطة في الوسم الواحد)
+                for part in coords_text.split():
+                    c = part.split(',')
+                    if len(c) >= 2:
+                        # إضافة خط الطول (Longitude) ثم خط العرض (Latitude)
+                        points.append((float(c[0]), float(c[1])))
 
         if len(points) > 1:
+            # إنشاء ملف KML جديد يحتوي على الخط الواصل
             new_kml = simplekml.Kml()
             line = new_kml.newlinestring(name="مسار الإنارة المنفذ")
             line.coords = points
             line.style.linestyle.width = 5
-            line.style.linestyle.color = simplekml.Color.orange
+            line.style.linestyle.color = simplekml.Color.orange # لون برتقالي واضح
             
             output_kml = new_kml.kml()
             
-            st.success(f"✅ تم العثور على {len(points)} عمود وتوصيلهم بنجاح!")
+            st.success(f"✅ تم العثور على {len(points)} عمود بنجاح!")
             
+            # زر التحميل
             st.download_button(
                 label="تحميل ملف المسارات الجديد 📥",
                 data=output_kml,
@@ -57,7 +54,7 @@ if uploaded_file is not None:
                 mime="application/vnd.google-earth.kml+xml"
             )
         else:
-            st.warning("الملف لا يحتوي على نقاط كافية لإنشاء مسار.")
+            st.warning("الملف لا يحتوي على نقاط كافية لإنشاء مسار (تحتاج نقطتين على الأقل).")
             
     except Exception as e:
-        st.error(f"حدث خطأ أثناء قراءة الملف: {e}")
+        st.error(f"حدث خطأ في معالجة الملف: {e}")

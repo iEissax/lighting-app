@@ -2,3 +2,4 @@ streamlit
 simplekml
 fastkml
 shapely
+lxml

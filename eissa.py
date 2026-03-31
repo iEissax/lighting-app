@@ -19,20 +19,27 @@ if uploaded_file is not None:
         
         points = []
 
-        # دالة للبحث عن الإحداثيات داخل أي بنية للملف (Recursive Search)
-        def get_points(features):
-            for feature in features:
+        # دالة للبحث عن الإحداثيات بطريقة آمنة
+        def get_points(feature_list):
+            for feature in feature_list:
+                # التحقق من وجود هندسة (نقطة)
                 if hasattr(feature, 'geometry') and feature.geometry is not None:
                     if feature.geometry.geom_type == 'Point':
                         points.append((feature.geometry.x, feature.geometry.y))
-                if hasattr(feature, 'features'):  # إذا كان مجلد أو وثيقة، ابحث داخلها
-                    get_points(feature.features())
+                
+                # البحث في العناصر الفرعية (مجلدات أو وثائق)
+                if hasattr(feature, 'features'):
+                    # هنا حل المشكلة: التأكد هل هي دالة أم قائمة
+                    sub_features = feature.features
+                    if callable(sub_features):
+                        get_points(list(sub_features()))
+                    else:
+                        get_points(list(sub_features))
 
-        # بدء البحث عن النقاط
+        # بدء البحث عن النقاط من جذر الملف
         get_points(list(k_obj.features()))
 
         if len(points) > 1:
-            # إنشاء KML جديد للخطوط
             new_kml = simplekml.Kml()
             line = new_kml.newlinestring(name="مسار الإنارة المنفذ")
             line.coords = points
@@ -50,7 +57,7 @@ if uploaded_file is not None:
                 mime="application/vnd.google-earth.kml+xml"
             )
         else:
-            st.warning("الملف لا يحتوي على نقاط كافية (تحتاج نقطتين على الأقل لرسم خط).")
+            st.warning("الملف لا يحتوي على نقاط كافية لإنشاء مسار.")
             
     except Exception as e:
         st.error(f"حدث خطأ أثناء قراءة الملف: {e}")

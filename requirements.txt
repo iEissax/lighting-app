@@ -1,7 +1,4 @@
 streamlit
-pandas
-lxml
-xlsxwriter
-pydeck
-folium
-streamlit-folium
+simplekml
+fastkml
+shapely

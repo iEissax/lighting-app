@@ -1,52 +1,56 @@
 import streamlit as st
 import simplekml
 from fastkml import kml
-from shapely.geometry import Point
 import io
 
 st.set_page_config(page_title="مخطط مسارات الإنارة", layout="centered")
 
 st.title("⚡ مخطط مسارات الإنارة التلقائي")
-st.write("ارفع ملف الـ KML الخاص بالأعمدة ليتم رسم الخطوط بينها فوراً.")
+st.write("ارفع ملف KML المصدر من Map Marker لرسم الخطوط تلقائياً.")
 
-# رفع الملف
-uploaded_file = st.file_uploader("اختر ملف KML المصدر من Map Marker", type=['kml'])
+uploaded_file = st.file_uploader("اختر ملف KML", type=['kml'])
 
 if uploaded_file is not None:
-    # قراءة الملف المرفوع
-    kml_content = uploaded_file.read()
-    k = kml.KML()
-    k.from_string(kml_content)
-    
-    points = []
-    
-    # استخراج الإحداثيات من الماركرز (Markers)
-    for feature in list(k.features()):
-        if hasattr(feature, 'features'):
-            for sub_feature in list(feature.features()):
-                if hasattr(sub_feature, 'geometry') and isinstance(sub_feature.geometry, Point):
-                    # حفظ الإحداثيات (خط الطول، خط العرض)
-                    points.append((sub_feature.geometry.x, sub_feature.geometry.y))
+    try:
+        # قراءة محتوى الملف
+        kml_content = uploaded_file.read()
+        k_obj = kml.KML()
+        k_obj.from_string(kml_content)
+        
+        points = []
 
-    if len(points) > 1:
-        # إنشاء ملف KML جديد يحتوي على الخطوط
-        new_kml = simplekml.Kml()
-        line = new_kml.newlinestring(name="مسار الشارع المنفذ")
-        line.coords = points
-        line.style.linestyle.width = 5
-        line.style.linestyle.color = simplekml.Color.orange # لون برتقالي واضح
-        
-        # تحويل الملف الجديد إلى "Bytes" للتحميل
-        output_kml = new_kml.kml()
-        
-        st.success(f"✅ تم معالجة {len(points)} عمود بنجاح!")
-        
-        # زر التحميل
-        st.download_button(
-            label="تحميل ملف المسارات الجديد 📥",
-            data=output_kml,
-            file_name="Lighting_Path_Result.kml",
-            mime="application/vnd.google-earth.kml+xml"
-        )
-    else:
-        st.error("الملف لا يحتوي على نقاط كافية لإنشاء مسار.")
+        # دالة للبحث عن الإحداثيات داخل أي بنية للملف (Recursive Search)
+        def get_points(features):
+            for feature in features:
+                if hasattr(feature, 'geometry') and feature.geometry is not None:
+                    if feature.geometry.geom_type == 'Point':
+                        points.append((feature.geometry.x, feature.geometry.y))
+                if hasattr(feature, 'features'):  # إذا كان مجلد أو وثيقة، ابحث داخلها
+                    get_points(feature.features())
+
+        # بدء البحث عن النقاط
+        get_points(list(k_obj.features()))
+
+        if len(points) > 1:
+            # إنشاء KML جديد للخطوط
+            new_kml = simplekml.Kml()
+            line = new_kml.newlinestring(name="مسار الإنارة المنفذ")
+            line.coords = points
+            line.style.linestyle.width = 5
+            line.style.linestyle.color = simplekml.Color.orange
+            
+            output_kml = new_kml.kml()
+            
+            st.success(f"✅ تم العثور على {len(points)} عمود وتوصيلهم بنجاح!")
+            
+            st.download_button(
+                label="تحميل ملف المسارات الجديد 📥",
+                data=output_kml,
+                file_name="Lighting_Path_Result.kml",
+                mime="application/vnd.google-earth.kml+xml"
+            )
+        else:
+            st.warning("الملف لا يحتوي على نقاط كافية (تحتاج نقطتين على الأقل لرسم خط).")
+            
+    except Exception as e:
+        st.error(f"حدث خطأ أثناء قراءة الملف: {e}")

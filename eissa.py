@@ -5,13 +5,14 @@ import zipfile
 import re
 import math
 
-st.set_page_config(page_title="مخطط الشبكة الذكي - نمار", layout="centered")
+st.set_page_config(page_title="مخطط شبكة إنارة نمار", layout="centered")
 
-st.title("⚡ مخطط الشبكة المتكامل (رسم هندسي)")
-st.write("هذا النظام يوصل الأعمدة في كل الاتجاهات ليشكل شبكة شوارع منظمة كما في صورتك.")
+st.title("⚡ مخطط الشبكة الهندسية المتكامل")
+st.write("هذا النظام يربط الأعمدة كشبكة مربعات منظمة لتناسب شوارع نمار.")
 
-# السلايدر للتحكم في دقة التوصيل
-max_dist = st.slider("حساسية المسافة (لتجنب القفز بين الشوارع):", 0.0001, 0.0010, 0.0004, format="%.4f")
+# سلايدر للتحكم في طول الخط (المسافة بين الأعمدة)
+# إذا كانت الخطوط تقفز بين الشوارع، صغر هذه القيمة
+max_dist = st.slider("مدى التوصيل (الحساسية):", 0.0001, 0.0010, 0.0004, format="%.4f")
 
 uploaded_file = st.file_uploader("ارفع ملف KMZ أو KML", type=['kmz', 'kml'])
 
@@ -44,47 +45,45 @@ if uploaded_file is not None:
         if len(points) > 1:
             new_kml = simplekml.Kml()
             
-            # --- خوارزمية الرسم الشبكي (Grid Connection) ---
-            # نستخدم مجموعة (Set) لتعقب التوصيلات التي تمت بالفعل لمنع التكرار
+            # منع تكرار رسم الخطوط بين نفس النقطتين
             connections = set()
             
             for i in range(len(points)):
                 p1 = points[i]
-                # البحث عن أقرب نقطتين لكل نقطة (واحدة طولياً وواحدة عرضياً)
-                neighbors = []
+                # قائمة بالجيران القريبين
+                potential_neighbors = []
                 for j in range(len(points)):
                     if i == j: continue
                     p2 = points[j]
                     dist = get_distance(p1, p2)
                     if dist < max_dist:
-                        neighbors.append((dist, j))
+                        potential_neighbors.append((dist, j))
                 
-                # ترتيب الجيران حسب القرب
-                neighbors.sort()
+                # ترتيب الجيران من الأقرب للأبعد
+                potential_neighbors.sort()
                 
-                # توصيل النقطة بأقرب جيرانها (بحد أقصى جارتين لضمان عدم التداخل)
-                for d, neighbor_idx in neighbors[:2]:
-                    # إنشاء معرف فريد للتوصيلة لمنع رسم الخط مرتين
+                # توصيل العمود بأقرب جارين له فقط لضمان شكل الشبكة (طول وعرض)
+                for d, neighbor_idx in potential_neighbors[:2]:
                     conn_id = tuple(sorted((i, neighbor_idx)))
                     if conn_id not in connections:
                         line = new_kml.newlinestring(name="مسار إنارة")
                         line.coords = [p1, points[neighbor_idx]]
-                        line.style.linestyle.width = 4
+                        line.style.linestyle.width = 5
                         line.style.linestyle.color = simplekml.Color.orange
                         connections.add(conn_id)
 
-            # إضافة الأعمدة كعلامات
+            # إضافة الأعمدة كعلامات في الملف الجديد
             for p in points:
                 new_kml.newpoint(name="", coords=[p])
 
             output_kml = new_kml.kml()
-            st.success(f"✅ تم إنشاء شبكة مسارات منظمة لـ {len(points)} عمود!")
+            st.success(f"✅ تم رسم الشبكة الهندسية بنجاح لـ {len(points)} عمود!")
             
             st.download_button(
-                label="تحميل المخطط الشبكي الجديد 📥",
+                label="تحميل المخطط الشبكي 📥",
                 data=output_kml,
-                file_name="Grid_Lighting_Final.kml",
+                file_name="Grid_Final_Layout.kml",
                 mime="application/vnd.google-earth.kml+xml"
             )
     except Exception as e:
-        st.error(f"خطأ: {e}")
+        st.error(f"خطأ تقني: {e}")

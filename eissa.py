@@ -5,7 +5,7 @@ from lxml import etree
 import re
 import io
 
-# دالة الترتيب الطبيعي
+# دالة الترتيب الطبيعي للمحطات
 def natural_sort_key(s):
     if pd.isna(s) or s == "":
         return tuple()
@@ -26,15 +26,15 @@ def process_kmz(file):
             ns = {"kml": "http://www.opengis.net/kml/2.2"}
 
             for pm in tree.xpath("//kml:Placemark", namespaces=ns):
-                # --- 1. العنوان (Name) ---
+                # --- 1. استخراج الاسم (Name) ---
                 name_nodes = pm.xpath("./kml:name/text()", namespaces=ns)
                 full_name = name_nodes[0].strip() if name_nodes else ""
                 
-                # استخراج كود المحطة (يدعم العربية والأرقام)
+                # استخراج كود المحطة
                 st_match = re.search(r'(\d+[\u0600-\u06FF]+|[\u0600-\u06FF]+\d+)', full_name)
                 station_code = st_match.group(1) if st_match else "غير محدد"
 
-                # استخراج أرقام (العمود / الفيدر)
+                # استخراج أرقام العمود والفيدر
                 clean_name = full_name.replace(station_code, "").strip()
                 name_nums = re.findall(r'\d+', clean_name)
                 column_num, feeder_num = "", ""
@@ -50,7 +50,6 @@ def process_kmz(file):
                 tech_info = (desc + " " + ext_vals).strip()
                 
                 val_height, val_arms = "", ""
-                # البحث عن نمط (طول/ذراع) مثل 12/2 أو 10-1
                 pattern_match = re.search(r'(\d+)[/-](\d+)', tech_info)
                 if pattern_match:
                     val_height, val_arms = pattern_match.group(1), pattern_match.group(2)
@@ -71,8 +70,9 @@ def process_kmz(file):
                     try:
                         c_split = coords[0].strip().split(',')
                         lat_v, lon_v = round(float(c_split[1]), 6), round(float(c_split[0]), 6)
-                    except (IndexError, ValueError): pass
+                    except: pass
 
+                # تحديد حالة العمود (مفقود/مغروز)
                 all_txt = (full_name + " " + tech_info).lower()
                 detail = "مفقود" if "مفقود" in all_txt else ("مغروز" if "مغروز" in all_txt else "")
 
@@ -87,49 +87,60 @@ def process_kmz(file):
                     "التفاصيل": detail
                 })
     except Exception as e:
-        st.error(f"خطأ في معالجة الملف {file.name}: {e}")
+        st.error(f"خطأ في الملف {file.name}: {e}")
     return pd.DataFrame(data)
 
 if uploaded_files:
     all_dfs = [process_kmz(f) for f in uploaded_files]
     df = pd.concat(all_dfs, ignore_index=True)
 
-    # تنظيف البيانات وضمان الترتيب الرقمي
-    for col in ['رقم العمود', 'رقم الفيدر']:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+    # --- التعديل الجوهري للترتيب ---
+    # تحويل رقم العمود والفيدر لأرقام حقيقية لضمان التسلسل (89, 90, 91)
+    df['رقم العمود'] = pd.to_numeric(df['رقم العمود'], errors='coerce').fillna(0).astype(int)
+    df['رقم الفيدر'] = pd.to_numeric(df['رقم الفيدر'], errors='coerce').fillna(0).astype(int)
 
-    df = df.sort_values(by=['المحطة', 'رقم الفيدر', 'رقم العمود'], 
-                        key=lambda x: x.map(natural_sort_key) if x.name == 'المحطة' else x)
+    # الترتيب: المحطة أولاً (ترتيب طبيعي)، ثم الفيدر، ثم رقم العمود المتسلسل
+    df = df.sort_values(
+        by=['المحطة', 'رقم الفيدر', 'رقم العمود'], 
+        ascending=[True, True, True],
+        key=lambda x: x.map(natural_sort_key) if x.name == 'المحطة' else x
+    )
 
-    # تصدير Excel
+    # تصدير Excel مع التنسيقات
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Lighting_Report') # تصدير أولي سريع
+        df.to_excel(writer, index=False, sheet_name='Lighting_Report')
         workbook = writer.book
         worksheet = writer.sheets['Lighting_Report']
         worksheet.right_to_left()
 
-        # تنسيقات مخصصة
+        # تعريف التنسيقات
         header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center'})
         station_fmt = workbook.add_format({'bg_color': '#7F7F7F', 'font_color': 'white', 'border': 1, 'align': 'center'})
         red_fmt = workbook.add_format({'bg_color': '#FF0000', 'font_color': 'white', 'border': 1, 'align': 'center'})
-        coord_fmt = workbook.add_format({'num_format': '0.000000', 'border': 1, 'align': 'center'})
         normal_fmt = workbook.add_format({'border': 1, 'align': 'center'})
+        coord_fmt = workbook.add_format({'num_format': '0.000000', 'border': 1, 'align': 'center'})
 
-        # ضبط عرض الأعمدة وكتابة التنسيق
+        # ضبط العناوين
         for i, col in enumerate(df.columns):
             worksheet.write(0, i, col, header_fmt)
             worksheet.set_column(i, i, 15)
 
+        # كتابة البيانات مع تلوين الصف المفقود في مكانه
         for row_idx, row_val in enumerate(df.values, start=1):
-            is_urgent = str(row_val[7]) in ["مفقود", "مغروز"] # عمود التفاصيل
+            # نتحقق من عمود "التفاصيل" (رقم 7 في الترتيب)
+            is_urgent = str(row_val[7]) in ["مفقود", "مغروز"]
+            
             for col_idx, cell_val in enumerate(row_val):
                 current_fmt = normal_fmt
-                if is_urgent: current_fmt = red_fmt
-                elif col_idx == 0: current_fmt = station_fmt # عمود المحطة
-                elif col_idx in [5, 6]: current_fmt = coord_fmt # الإحداثيات
+                if is_urgent:
+                    current_fmt = red_fmt
+                elif col_idx == 0: # عمود المحطة
+                    current_fmt = station_fmt
+                elif col_idx in [5, 6]: # الإحداثيات
+                    current_fmt = coord_fmt
                 
                 worksheet.write(row_idx, col_idx, cell_val, current_fmt)
 
-    st.success(f"✅ تم معالجة {len(df)} عمود إنارة بنجاح!")
-    st.download_button("📥 تحميل التقرير النهائي (Excel)", output.getvalue(), "Lighting_Report_Professional.xlsx")
+    st.success(f"✅ تم المعالجة بنجاح. 'المفقود' الآن يظهر ضمن التسلسل الرقمي.")
+    st.download_button("📥 تحميل التقرير المعدل", output.getvalue(), "Lighting_Report_Sorted.xlsx")
